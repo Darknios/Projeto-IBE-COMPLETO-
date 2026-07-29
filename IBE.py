@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from io import BytesIO
 
 import pandas as pd
 import plotly.express as px
@@ -35,6 +36,19 @@ def format_service_time(value: object) -> str:
     """Keep legacy values in the data while showing clear labels in the UI."""
     labels = {"1": "Manhã", "2": "Noite"}
     return labels.get(str(value).strip(), str(value))
+
+
+def dataframe_to_excel(dataframe: pd.DataFrame) -> bytes:
+    """Create an XLSX file in memory from the rows currently shown in the dashboard."""
+    output = BytesIO()
+    sheet_name = "Quantidades por setor"
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        dataframe.to_excel(writer, index=False, sheet_name=sheet_name)
+        worksheet = writer.sheets[sheet_name]
+        for column_index, column_name in enumerate(dataframe.columns, start=1):
+            longest_value = max(len(str(column_name)), *(len(str(value)) for value in dataframe[column_name]))
+            worksheet.column_dimensions[worksheet.cell(1, column_index).column_letter].width = min(longest_value + 2, 32)
+    return output.getvalue()
 
 
 st.set_page_config(page_title="Frequência IBE", layout="wide", initial_sidebar_state="collapsed")
@@ -384,6 +398,12 @@ def show_dashboard(dataframe: pd.DataFrame) -> None:
     display = period_filtered.sort_values("Data", ascending=False).copy()
     display["Data"] = display["Data"].dt.strftime("%d/%m/%Y")
     st.dataframe(display, use_container_width=True, hide_index=True)
+    st.download_button(
+        "Exportar para Excel",
+        data=dataframe_to_excel(display),
+        file_name="quantidades_por_setor.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
     st.subheader("Métricas")
     average_metric, highest_metric, lowest_metric, count_metric = st.columns(4)
