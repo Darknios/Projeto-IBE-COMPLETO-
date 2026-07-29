@@ -1,0 +1,6 @@
+streamlit
+pandas
+plotly
+supabase==2.31.0
+postgrest==2.31.0
+openpyxl
