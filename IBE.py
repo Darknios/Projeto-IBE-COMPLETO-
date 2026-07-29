@@ -75,6 +75,8 @@ st.markdown(
         .st-key-ibe_header .ibe-hero { padding: .65rem .75rem; }
         .stButton > button { min-height: 3.1rem; font-size: 1.05rem; font-weight: 650; }
         div[data-baseweb="input"] input { font-size: 16px; }
+        [data-testid="stPlotlyChart"] { padding-top: 2.55rem; }
+        [data-testid="stPlotlyChart"] .modebar { top: -2.35rem !important; right: .15rem !important; z-index: 2; }
     }
 
     /* Larger screens: improve spacing and readability on notebooks */
