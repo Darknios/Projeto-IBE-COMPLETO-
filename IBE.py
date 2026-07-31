@@ -51,7 +51,7 @@ def dataframe_to_excel(dataframe: pd.DataFrame) -> bytes:
     return output.getvalue()
 
 
-st.set_page_config(page_title="Frequência IBE", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Frequência IBE", page_icon="logo_transparent.png", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown(
     """
@@ -75,8 +75,6 @@ st.markdown(
         .st-key-ibe_header .ibe-hero { padding: .65rem .75rem; }
         .stButton > button { min-height: 3.1rem; font-size: 1.05rem; font-weight: 650; }
         div[data-baseweb="input"] input { font-size: 16px; }
-        [data-testid="stPlotlyChart"] { padding-top: 2.55rem; }
-        [data-testid="stPlotlyChart"] .modebar { top: -2.35rem !important; right: .15rem !important; z-index: 2; }
     }
 
     /* Larger screens: improve spacing and readability on notebooks */
@@ -99,9 +97,9 @@ st.markdown(
     .stSidebar img, .sidebar .stImage img, div[data-testid="stImage"] img { background: transparent !important; border-radius: 8px !important; }
     .stSidebar .stImage, .sidebar .stImage { background: transparent !important; }
     /* Dashboard filter sidebar */
-    [data-testid="stSidebar"] { min-width: 230px !important; max-width: 230px !important; background: #282932; border-right: 1px solid #30323b; }
+    [data-testid="stSidebar"] { min-width: 280px !important; max-width: 280px !important; background: #282932; border-right: 1px solid #30323b; }
     [data-testid="stSidebar"] > div:first-child { background: #282932; }
-    [data-testid="stSidebarContent"] { padding: 1.45rem 1.2rem; }
+    [data-testid="stSidebarContent"] { padding: 1.45rem 1.2rem; overflow: hidden; }
     [data-testid="stSidebar"] .filters-title { color: #f5f5f7; font-size: 1.28rem; font-weight: 700; line-height: 1; margin: .1rem 0 3.25rem; }
     [data-testid="stSidebar"] .filter-section { color: #f5f5f7; font-size: .9rem; font-weight: 700; margin: 0 0 1rem; }
     [data-testid="stSidebar"] label { color: #f2f2f4 !important; font-size: .78rem !important; margin-bottom: -.1rem; }
@@ -111,11 +109,10 @@ st.markdown(
     [data-testid="stSidebar"] [data-baseweb="select"] * { color: #f2f2f4; }
     [data-testid="stSidebar"] [data-baseweb="select"] svg { fill: #f2f2f4; }
     [data-testid="stSidebar"] [data-testid="stElementContainer"]:has(.filter-section) { margin-top: .95rem; }
-    .st-key-sidebar_footer_logo { position: fixed; left: 54px; bottom: 3.8rem; width: 120px; text-align: center; }
-    .st-key-sidebar_footer_logo img { border-radius: 0 !important; }
+    /* footer logo removed */
     @media (max-width: 768px) {
         [data-testid="stSidebar"] { min-width: min(230px, 82vw) !important; max-width: min(230px, 82vw) !important; }
-        .st-key-sidebar_footer_logo { left: 55px; }
+        .st-key-sidebar_footer_logo { left: 55px; bottom: 0.8rem; }
     }
     </style>
     """,
@@ -150,7 +147,7 @@ def show_header() -> None:
             st.image("logo.png", width=190)
         with right:
             st.markdown(
-                "<div class='ibe-hero'><h1>Relatório de Frequência - Cultos de Domingo</h1></div>",
+                "<div class='ibe-hero'><h1>Relatório de Frequência Cultos IBE</h1></div>",
                 unsafe_allow_html=True,
             )
 
@@ -165,28 +162,28 @@ def _show_dashboard_compact(dataframe: pd.DataFrame) -> None:
     dataframe["Mês"] = dataframe["Data"].dt.month
     dataframe["Ano"] = dataframe["Data"].dt.year
     # Sidebar logo + filters for compact view (keeps mobile friendly behaviour)
-    st.sidebar.markdown(
-        "<div style='text-align:center;margin-bottom: 180px;'><img src='logo_transparent.png' style='background:transparent;border-radius:8px;width:64px;height:auto;'/></div>",
-        unsafe_allow_html=True,
-    )
+    # removed inline logo per request
     st.sidebar.markdown("**Filtros**")
-    selected_year = st.sidebar.selectbox(
+    selected_year = st.sidebar.multiselect(
         "Ano",
         ["Todos"] + sorted(dataframe["Ano"].unique().tolist()),
+        default=["Todos"],
         key="compact_year",
     )
-    selected_service = st.sidebar.selectbox(
+    selected_service = st.sidebar.multiselect(
         "Horário do culto",
         ["Todos"] + sorted(dataframe["Horário do culto"].dropna().unique().tolist()),
+        default=["Todos"],
         format_func=lambda value: value if value == "Todos" else format_service_time(value),
         key="compact_service",
     )
 
     filtered = dataframe.copy()
-    if selected_year != "Todos":
-        filtered = filtered[filtered["Ano"] == selected_year]
-    if selected_service != "Todos":
-        filtered = filtered[filtered["Horário do culto"] == selected_service]
+    # apply compact filters (support multiple selections)
+    if not (not selected_year or "Todos" in selected_year):
+        filtered = filtered[filtered["Ano"].isin(selected_year)]
+    if not (not selected_service or "Todos" in selected_service):
+        filtered = filtered[filtered["Horário do culto"].isin(selected_service)]
 
     total_present = int(filtered["Total"].sum())
     total_online = int(filtered["Quantidade On-line"].sum())
@@ -234,37 +231,38 @@ def show_dashboard(dataframe: pd.DataFrame) -> None:
     # Sidebar filters for full dashboard (keeps layout clean on notebooks)
     st.sidebar.markdown("<div class='filters-title'>Filtros:</div>", unsafe_allow_html=True)
     st.sidebar.markdown("<div class='filter-section'>Período</div>", unsafe_allow_html=True)
-    selected_month = st.sidebar.selectbox(
-        "Mês", ["Todos"] + sorted(dataframe["Mês"].unique().tolist()), key="dashboard_month"
+    selected_month = st.sidebar.multiselect(
+        "Mês", ["Todos"] + sorted(dataframe["Mês"].unique().tolist()), default=["Todos"], key="dashboard_month"
     )
-    selected_year = st.sidebar.selectbox(
-        "Ano", ["Todos"] + sorted(dataframe["Ano"].unique().tolist()), key="dashboard_year"
+    selected_year = st.sidebar.multiselect(
+        "Ano", ["Todos"] + sorted(dataframe["Ano"].unique().tolist()), default=["Todos"], key="dashboard_year"
     )
     st.sidebar.markdown("<div class='filter-section'>Culto</div>", unsafe_allow_html=True)
-    selected_date = st.sidebar.selectbox(
+    selected_date = st.sidebar.multiselect(
         "Domingo/data",
         ["Todos"] + available_dates,
+        default=["Todos"],
         format_func=lambda value: value.strftime("%d/%m/%Y") if value != "Todos" else value,
         key="dashboard_date",
     )
-    selected_service = st.sidebar.selectbox(
+    selected_service = st.sidebar.multiselect(
         "Horário do culto",
         ["Todos"] + sorted(dataframe["Horário do culto"].dropna().unique().tolist()),
+        default=["Todos"],
         format_func=lambda value: value if value == "Todos" else format_service_time(value),
         key="dashboard_service",
     )
-    with st.sidebar:
-        with st.container(key="sidebar_footer_logo"):
-            st.image("logo_transparent.png", width=500)
+    # footer logo removed
     filtered = dataframe.copy()
-    if selected_month != "Todos":
-        filtered = filtered[filtered["Mês"] == selected_month]
-    if selected_year != "Todos":
-        filtered = filtered[filtered["Ano"] == selected_year]
-    if selected_date != "Todos":
-        filtered = filtered[filtered["Data"].dt.date == selected_date]
-    if selected_service != "Todos":
-        filtered = filtered[filtered["Horário do culto"] == selected_service]
+    # apply dashboard filters (support multiple selections)
+    if not (not selected_month or "Todos" in selected_month):
+        filtered = filtered[filtered["Mês"].isin(selected_month)]
+    if not (not selected_year or "Todos" in selected_year):
+        filtered = filtered[filtered["Ano"].isin(selected_year)]
+    if not (not selected_date or "Todos" in selected_date):
+        filtered = filtered[filtered["Data"].dt.date.isin(selected_date)]
+    if not (not selected_service or "Todos" in selected_service):
+        filtered = filtered[filtered["Horário do culto"].isin(selected_service)]
     if filtered.empty:
         st.info("Nenhum lançamento encontrado para os filtros escolhidos.")
         return
