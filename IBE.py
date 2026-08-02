@@ -158,6 +158,9 @@ def sidebar_filter_group(
     key_prefix: str,
     date_label: str = "Domingo/data",
     filter_renove: bool = False,
+    show_service_filter: bool = True,
+    weekday_filter: int | None = None,
+    exclude_service_values: list[str] | None = None,
 ) -> dict[str, list]:
     df = dataframe.copy()
     df["Mês"] = df["Data"].dt.month
@@ -166,6 +169,8 @@ def sidebar_filter_group(
         df = df[df["Grupo da recepção"].astype(str).str.contains("Renove", case=False, na=False)]
     else:
         df = df[~df["Grupo da recepção"].astype(str).str.contains("Renove", case=False, na=False)]
+    if weekday_filter is not None:
+        df = df[df["Data"].dt.weekday == weekday_filter]
 
     available_dates = sorted(df["Data"].dt.date.unique().tolist())
 
@@ -189,13 +194,23 @@ def sidebar_filter_group(
         format_func=lambda value: value.strftime("%d/%m/%Y") if value != "Todos" else value,
         key=f"{key_prefix}_date",
     )
-    selected_service = st.sidebar.multiselect(
-        "Horário do culto",
-        ["Todos"] + sorted(df["Horário do culto"].dropna().unique().tolist()),
-        default=["Todos"],
-        format_func=lambda value: value if value == "Todos" else format_service_time(value),
-        key=f"{key_prefix}_service",
-    )
+    selected_service = ["Todos"]
+    if show_service_filter:
+        available_services = sorted(df["Horário do culto"].dropna().unique().tolist())
+        if exclude_service_values:
+            exclude_lower = [value.lower() for value in exclude_service_values]
+            available_services = [
+                value
+                for value in available_services
+                if str(value).lower() not in exclude_lower
+            ]
+        selected_service = st.sidebar.multiselect(
+            "Horário do culto",
+            ["Todos"] + available_services,
+            default=["Todos"],
+            format_func=lambda value: value if value == "Todos" else format_service_time(value),
+            key=f"{key_prefix}_service",
+        )
     return {
         "month": selected_month,
         "year": selected_year,
@@ -273,6 +288,8 @@ def show_dashboard(
     key_prefix: str = "dashboard",
     filter_group_contains: str | None = None,
     exclude_group_contains: str | None = None,
+    weekday: int | None = None,
+    exclude_weekday_from_charts: int | None = None,
     sidebar_filters: dict[str, list] | None = None,
 ) -> None:
     """Restaura a análise completa do dashboard original usando dados do Supabase."""
@@ -286,6 +303,8 @@ def show_dashboard(
     dataframe["Ano"] = dataframe["Data"].dt.year
     if filter_group_contains:
         dataframe = dataframe[dataframe["Grupo da recepção"].astype(str).str.contains(filter_group_contains, case=False, na=False)]
+    if weekday is not None:
+        dataframe = dataframe[dataframe["Data"].dt.weekday == weekday]
 
     if sidebar_filters is None:
         selected_month = ["Todos"]
@@ -319,6 +338,8 @@ def show_dashboard(
         chart_data = chart_data[
             ~chart_data["Grupo da recepção"].astype(str).str.contains(exclude_group_contains, case=False, na=False)
         ]
+    if exclude_weekday_from_charts is not None:
+        chart_data = chart_data[chart_data["Data"].dt.weekday != exclude_weekday_from_charts]
 
     total_present = int(chart_data["Total"].sum()) if not chart_data.empty else 0
     total_online = int(chart_data["Quantidade On-line"].sum()) if not chart_data.empty else 0
@@ -335,15 +356,16 @@ def show_dashboard(
         unsafe_allow_html=True,
     )
 
-    if filter_group_contains:
+    if filter_group_contains or weekday is not None:
         by_date = filtered.groupby("Data", as_index=False)["Total"].sum().sort_values("Data")
         by_date["DataLabel"] = by_date["Data"].dt.strftime("%d/%m")
+        title_suffix = filter_group_contains if filter_group_contains else "Quarta-feira"
         chart = px.line(
             by_date,
             x="DataLabel",
             y="Total",
             markers=True,
-            title=f"Total de pessoas por data ({filter_group_contains})",
+            title=f"Total de pessoas por data ({title_suffix})",
         )
         chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Total de pessoas", xaxis_title="Data")
         st.plotly_chart(chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
@@ -604,6 +626,7 @@ domingo_filters = sidebar_filter_group(
     key_prefix="domingo",
     date_label="Domingo/data",
     filter_renove=False,
+    exclude_service_values=["Oração"],
 )
 renove_filters = sidebar_filter_group(
     data,
@@ -611,6 +634,16 @@ renove_filters = sidebar_filter_group(
     key_prefix="renove",
     date_label="Data",
     filter_renove=True,
+    show_service_filter=False,
+)
+quarta_filters = sidebar_filter_group(
+    data,
+    title="Filtro Culto de Quarta-feira:",
+    key_prefix="quarta",
+    date_label="Data",
+    filter_renove=False,
+    show_service_filter=False,
+    weekday_filter=2,
 )
 
 default_filters = {
@@ -620,19 +653,33 @@ default_filters = {
     "service": ["Todos"],
 }
 
-tabs = st.tabs(["Cultos de Domingo", "Cultos Renove", "Cultos do Cafofo"])
+tabs = st.tabs(["Cultos de Domingo", "Cultos Renove", "Cultos de Quarta-feira", "Cultos do Cafofo"])
 
 with tabs[0]:
     show_dashboard(
         data,
         key_prefix="domingo",
         exclude_group_contains="Renove",
+        exclude_weekday_from_charts=2,
         sidebar_filters=domingo_filters,
     )
 
 with tabs[1]:
-    show_dashboard(data, key_prefix="renove", filter_group_contains="Renove", sidebar_filters=renove_filters)
+    show_dashboard(
+        data,
+        key_prefix="renove",
+        filter_group_contains="Renove",
+        sidebar_filters=renove_filters,
+    )
 
 with tabs[2]:
+    show_dashboard(
+        data,
+        key_prefix="quarta",
+        weekday=2,
+        sidebar_filters=quarta_filters,
+    )
+
+with tabs[3]:
     show_dashboard(data, key_prefix="cafofo", filter_group_contains="Cafofo", sidebar_filters=default_filters)
     
