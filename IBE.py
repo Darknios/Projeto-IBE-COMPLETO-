@@ -99,8 +99,8 @@ st.markdown(
     /* Dashboard filter sidebar */
     [data-testid="stSidebar"] { min-width: 280px !important; max-width: 280px !important; background: #282932; border-right: 1px solid #30323b; }
     [data-testid="stSidebar"] > div:first-child { background: #282932; }
-    [data-testid="stSidebarContent"] { padding: 1.45rem 1.2rem; overflow: hidden; }
-    [data-testid="stSidebar"] .filters-title { color: #f5f5f7; font-size: 1.28rem; font-weight: 700; line-height: 1; margin: .1rem 0 3.25rem; }
+    [data-testid="stSidebarContent"] { padding: 1.45rem 1.2rem; overflow-y: auto; max-height: calc(100vh - 4rem); }
+    [data-testid="stSidebar"] .filters-title { color: #f5f5f7; font-size: 1.28rem; font-weight: 700; line-height: 1; margin: .1rem 0 1rem; }
     [data-testid="stSidebar"] .filter-section { color: #f5f5f7; font-size: .9rem; font-weight: 700; margin: 0 0 1rem; }
     [data-testid="stSidebar"] label { color: #f2f2f4 !important; font-size: .78rem !important; margin-bottom: -.1rem; }
     [data-testid="stSidebar"] [data-baseweb="select"] > div {
@@ -150,6 +150,58 @@ def show_header() -> None:
                 "<div class='ibe-hero'><h1>Relatório de Frequência Cultos IBE</h1></div>",
                 unsafe_allow_html=True,
             )
+
+
+def sidebar_filter_group(
+    dataframe: pd.DataFrame,
+    title: str,
+    key_prefix: str,
+    date_label: str = "Domingo/data",
+    filter_renove: bool = False,
+) -> dict[str, list]:
+    df = dataframe.copy()
+    df["Mês"] = df["Data"].dt.month
+    df["Ano"] = df["Data"].dt.year
+    if filter_renove:
+        df = df[df["Grupo da recepção"].astype(str).str.contains("Renove", case=False, na=False)]
+    else:
+        df = df[~df["Grupo da recepção"].astype(str).str.contains("Renove", case=False, na=False)]
+
+    available_dates = sorted(df["Data"].dt.date.unique().tolist())
+
+    st.sidebar.markdown(f"<div class='filters-title'>{title}</div>", unsafe_allow_html=True)
+    selected_month = st.sidebar.multiselect(
+        "Mês",
+        ["Todos"] + sorted(df["Mês"].unique().tolist()),
+        default=["Todos"],
+        key=f"{key_prefix}_month",
+    )
+    selected_year = st.sidebar.multiselect(
+        "Ano",
+        ["Todos"] + sorted(df["Ano"].unique().tolist()),
+        default=["Todos"],
+        key=f"{key_prefix}_year",
+    )
+    selected_date = st.sidebar.multiselect(
+        date_label,
+        ["Todos"] + available_dates,
+        default=["Todos"],
+        format_func=lambda value: value.strftime("%d/%m/%Y") if value != "Todos" else value,
+        key=f"{key_prefix}_date",
+    )
+    selected_service = st.sidebar.multiselect(
+        "Horário do culto",
+        ["Todos"] + sorted(df["Horário do culto"].dropna().unique().tolist()),
+        default=["Todos"],
+        format_func=lambda value: value if value == "Todos" else format_service_time(value),
+        key=f"{key_prefix}_service",
+    )
+    return {
+        "month": selected_month,
+        "year": selected_year,
+        "date": selected_date,
+        "service": selected_service,
+    }
 
 
 def _show_dashboard_compact(dataframe: pd.DataFrame) -> None:
@@ -216,7 +268,13 @@ def _show_dashboard_compact(dataframe: pd.DataFrame) -> None:
         st.dataframe(display, use_container_width=True, hide_index=True)
 
 
-def show_dashboard(dataframe: pd.DataFrame) -> None:
+def show_dashboard(
+    dataframe: pd.DataFrame,
+    key_prefix: str = "dashboard",
+    filter_group_contains: str | None = None,
+    exclude_group_contains: str | None = None,
+    sidebar_filters: dict[str, list] | None = None,
+) -> None:
     """Restaura a análise completa do dashboard original usando dados do Supabase."""
     st.markdown("<h2 class='dashboard-title'>Dashboard de frequência</h2>", unsafe_allow_html=True)
     if dataframe.empty:
@@ -226,32 +284,20 @@ def show_dashboard(dataframe: pd.DataFrame) -> None:
     dataframe = dataframe.copy()
     dataframe["Mês"] = dataframe["Data"].dt.month
     dataframe["Ano"] = dataframe["Data"].dt.year
-    available_dates = sorted(dataframe["Data"].dt.date.unique().tolist())
+    if filter_group_contains:
+        dataframe = dataframe[dataframe["Grupo da recepção"].astype(str).str.contains(filter_group_contains, case=False, na=False)]
 
-    # Sidebar filters for full dashboard (keeps layout clean on notebooks)
-    st.sidebar.markdown("<div class='filters-title'>Filtros:</div>", unsafe_allow_html=True)
-    st.sidebar.markdown("<div class='filter-section'>Período</div>", unsafe_allow_html=True)
-    selected_month = st.sidebar.multiselect(
-        "Mês", ["Todos"] + sorted(dataframe["Mês"].unique().tolist()), default=["Todos"], key="dashboard_month"
-    )
-    selected_year = st.sidebar.multiselect(
-        "Ano", ["Todos"] + sorted(dataframe["Ano"].unique().tolist()), default=["Todos"], key="dashboard_year"
-    )
-    st.sidebar.markdown("<div class='filter-section'>Culto</div>", unsafe_allow_html=True)
-    selected_date = st.sidebar.multiselect(
-        "Domingo/data",
-        ["Todos"] + available_dates,
-        default=["Todos"],
-        format_func=lambda value: value.strftime("%d/%m/%Y") if value != "Todos" else value,
-        key="dashboard_date",
-    )
-    selected_service = st.sidebar.multiselect(
-        "Horário do culto",
-        ["Todos"] + sorted(dataframe["Horário do culto"].dropna().unique().tolist()),
-        default=["Todos"],
-        format_func=lambda value: value if value == "Todos" else format_service_time(value),
-        key="dashboard_service",
-    )
+    if sidebar_filters is None:
+        selected_month = ["Todos"]
+        selected_year = ["Todos"]
+        selected_date = ["Todos"]
+        selected_service = ["Todos"]
+    else:
+        selected_month = sidebar_filters["month"]
+        selected_year = sidebar_filters["year"]
+        selected_date = sidebar_filters["date"]
+        selected_service = sidebar_filters["service"]
+
     # footer logo removed
     filtered = dataframe.copy()
     # apply dashboard filters (support multiple selections)
@@ -267,9 +313,16 @@ def show_dashboard(dataframe: pd.DataFrame) -> None:
         st.info("Nenhum lançamento encontrado para os filtros escolhidos.")
         return
 
-    total_present = int(filtered["Total"].sum())
-    total_online = int(filtered["Quantidade On-line"].sum())
-    latest_date = filtered["Data"].max().strftime("%d/%m/%Y")
+    export_data = filtered.copy()
+    chart_data = filtered.copy()
+    if exclude_group_contains:
+        chart_data = chart_data[
+            ~chart_data["Grupo da recepção"].astype(str).str.contains(exclude_group_contains, case=False, na=False)
+        ]
+
+    total_present = int(chart_data["Total"].sum()) if not chart_data.empty else 0
+    total_online = int(chart_data["Quantidade On-line"].sum()) if not chart_data.empty else 0
+    latest_date = chart_data["Data"].max().strftime("%d/%m/%Y") if not chart_data.empty else "-"
     # Render summary cards (gray background, white text)
     st.markdown(
         f"""
@@ -282,8 +335,29 @@ def show_dashboard(dataframe: pd.DataFrame) -> None:
         unsafe_allow_html=True,
     )
 
+    if filter_group_contains:
+        by_date = filtered.groupby("Data", as_index=False)["Total"].sum().sort_values("Data")
+        by_date["DataLabel"] = by_date["Data"].dt.strftime("%d/%m")
+        chart = px.line(
+            by_date,
+            x="DataLabel",
+            y="Total",
+            markers=True,
+            title=f"Total de pessoas por data ({filter_group_contains})",
+        )
+        chart.update_layout(margin=dict(l=0, r=0, t=52, b=0), yaxis_title="Total de pessoas", xaxis_title="Data")
+        st.plotly_chart(chart, use_container_width=True)
+
+        st.subheader("Métricas")
+        average_metric, highest_metric, lowest_metric, count_metric = st.columns(4)
+        average_metric.metric("Média por culto", f"{filtered['Total'].mean():.0f}")
+        highest_metric.metric("Maior quantidade", int(filtered["Total"].max()))
+        lowest_metric.metric("Menor quantidade", int(filtered["Total"].min()))
+        count_metric.metric("Número de cultos", len(filtered))
+        return
+
     by_group = (
-        filtered.groupby("Grupo da recepção", as_index=False)["Total"].sum().sort_values("Grupo da recepção")
+        chart_data.groupby("Grupo da recepção", as_index=False)["Total"].sum().sort_values("Grupo da recepção")
     )
     group_chart = px.line(
         by_group,
@@ -298,7 +372,7 @@ def show_dashboard(dataframe: pd.DataFrame) -> None:
     st.plotly_chart(group_chart, use_container_width=True)
 
     online_by_group = (
-        filtered.groupby("Grupo da recepção", as_index=False)["Quantidade On-line"]
+        chart_data.groupby("Grupo da recepção", as_index=False)["Quantidade On-line"]
         .sum()
         .sort_values("Grupo da recepção")
     )
@@ -342,7 +416,7 @@ def show_dashboard(dataframe: pd.DataFrame) -> None:
     sector_chart.update_layout(showlegend=False, margin=dict(l=0, r=0, t=52, b=0), yaxis_title="Pessoas")
     st.plotly_chart(sector_chart, use_container_width=True)
 
-    by_service = filtered.groupby("Horário do culto", as_index=False)["Total"].sum()
+    by_service = chart_data.groupby("Horário do culto", as_index=False)["Total"].sum()
     service_labels = {
         "1": "Manhã",
         "manhã": "Manhã",
@@ -381,7 +455,10 @@ def show_dashboard(dataframe: pd.DataFrame) -> None:
         st.info("Nenhum lançamento encontrado no período selecionado.")
         return
 
-    by_date = period_filtered.groupby("Data", as_index=False)["Total"].sum().sort_values("Data")
+    export_data = period_filtered.copy()
+    by_date = chart_data[
+        (chart_data["Data"].dt.date >= start_date) & (chart_data["Data"].dt.date <= end_date)
+    ].groupby("Data", as_index=False)["Total"].sum().sort_values("Data")
     date_chart = px.line(
         by_date,
         x="Data",
@@ -521,4 +598,41 @@ except (SupabaseDataError, Exception):
     st.error("Não foi possível consultar as contagens. Verifique a configuração e as permissões do Supabase.")
     st.stop()
 
-show_dashboard(data)
+domingo_filters = sidebar_filter_group(
+    data,
+    title="Filtro Culto Domingos:",
+    key_prefix="domingo",
+    date_label="Domingo/data",
+    filter_renove=False,
+)
+renove_filters = sidebar_filter_group(
+    data,
+    title="Filtro Culto Renove:",
+    key_prefix="renove",
+    date_label="Data",
+    filter_renove=True,
+)
+
+default_filters = {
+    "month": ["Todos"],
+    "year": ["Todos"],
+    "date": ["Todos"],
+    "service": ["Todos"],
+}
+
+tabs = st.tabs(["Cultos de Domingo", "Cultos Renove", "Cultos do Cafofo"])
+
+with tabs[0]:
+    show_dashboard(
+        data,
+        key_prefix="domingo",
+        exclude_group_contains="Renove",
+        sidebar_filters=domingo_filters,
+    )
+
+with tabs[1]:
+    show_dashboard(data, key_prefix="renove", filter_group_contains="Renove", sidebar_filters=renove_filters)
+
+with tabs[2]:
+    show_dashboard(data, key_prefix="cafofo", filter_group_contains="Cafofo", sidebar_filters=default_filters)
+    
