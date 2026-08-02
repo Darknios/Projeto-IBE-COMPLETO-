@@ -259,8 +259,8 @@ def _show_dashboard_compact(dataframe: pd.DataFrame) -> None:
 
     by_date = filtered.groupby("Data", as_index=False)["Total"].sum().sort_values("Data")
     chart = px.line(by_date, x="Data", y="Total", markers=True, title="Presença por data")
-    chart.update_layout(margin=dict(l=0, r=0, t=52, b=0), yaxis_title="Pessoas", xaxis_title="")
-    st.plotly_chart(chart, use_container_width=True)
+    chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Pessoas", xaxis_title="")
+    st.plotly_chart(chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
     with st.expander("Ver lançamentos", expanded=False):
         display = filtered.sort_values("Data", ascending=False).copy()
@@ -345,8 +345,8 @@ def show_dashboard(
             markers=True,
             title=f"Total de pessoas por data ({filter_group_contains})",
         )
-        chart.update_layout(margin=dict(l=0, r=0, t=52, b=0), yaxis_title="Total de pessoas", xaxis_title="Data")
-        st.plotly_chart(chart, use_container_width=True)
+        chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Total de pessoas", xaxis_title="Data")
+        st.plotly_chart(chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
         st.subheader("Métricas")
         average_metric, highest_metric, lowest_metric, count_metric = st.columns(4)
@@ -368,8 +368,8 @@ def show_dashboard(
         title="Evolução do Total de Pessoas por Domingo",
     )
     group_chart.update_traces(textposition="top center", cliponaxis=False)
-    group_chart.update_layout(margin=dict(l=0, r=0, t=52, b=0), yaxis_title="Total de pessoas")
-    st.plotly_chart(group_chart, use_container_width=True)
+    group_chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Total de pessoas")
+    st.plotly_chart(group_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
     online_by_group = (
         chart_data.groupby("Grupo da recepção", as_index=False)["Quantidade On-line"]
@@ -384,8 +384,8 @@ def show_dashboard(
         title="Pessoas on-line por domingo",
     )
     online_chart.update_traces(textposition="outside", cliponaxis=False)
-    online_chart.update_layout(margin=dict(l=0, r=0, t=52, b=0), yaxis_title="Pessoas")
-    st.plotly_chart(online_chart, use_container_width=True)
+    online_chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Pessoas")
+    st.plotly_chart(online_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
     sector_labels = {
         "Quantidade Púlpito": "Púlpito",
@@ -413,8 +413,8 @@ def show_dashboard(
         title="Distribuição de pessoas por setor",
     )
     sector_chart.update_traces(textposition="outside", cliponaxis=False)
-    sector_chart.update_layout(showlegend=False, margin=dict(l=0, r=0, t=52, b=0), yaxis_title="Pessoas")
-    st.plotly_chart(sector_chart, use_container_width=True)
+    sector_chart.update_layout(showlegend=False, margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Pessoas")
+    st.plotly_chart(sector_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
     by_service = chart_data.groupby("Horário do culto", as_index=False)["Total"].sum()
     service_labels = {
@@ -435,8 +435,8 @@ def show_dashboard(
         color="Período do culto",
         color_discrete_map={"Manhã": "#93c5fd", "Noite": "#1e3a8a"},
     )
-    service_chart.update_layout(margin=dict(l=0, r=0, t=52, b=0))
-    st.plotly_chart(service_chart, use_container_width=True)
+    service_chart.update_layout(margin=dict(l=0, r=0, t=80, b=0))
+    st.plotly_chart(service_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
     st.subheader("Evolução por período")
     period_start_column, period_end_column = st.columns(2)
@@ -468,8 +468,8 @@ def show_dashboard(
         title="Evolução do total de pessoas por data",
     )
     date_chart.update_traces(textposition="top center", cliponaxis=False)
-    date_chart.update_layout(margin=dict(l=0, r=0, t=52, b=0), yaxis_title="Total de pessoas")
-    st.plotly_chart(date_chart, use_container_width=True)
+    date_chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Total de pessoas")
+    st.plotly_chart(date_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
     st.subheader("Quantidades de pessoas por setor")
     display = period_filtered.sort_values("Data", ascending=False).copy()
