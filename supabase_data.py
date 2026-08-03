@@ -33,7 +33,7 @@ NUMERIC_COLUMNS = tuple(
 )
 PAGE_SIZE = 1_000
 PUBLIC_DASHBOARD_URL = "https://fyyvubvceijyeuhvncri.supabase.co"
-PUBLIC_DASHBOARD_KEY = "sb_publishable__R5PSqn3VUYXJdcy-RsXOQ_69pJelxj"
+PUBLIC_DASHBOARD_KEY = "sb_publishable_AvqTQvdX630cTqbJ0kIlHQ_Ky-BaS8i"
 
 
 class SupabaseConfigurationError(RuntimeError):
