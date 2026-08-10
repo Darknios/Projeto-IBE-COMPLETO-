@@ -28,6 +28,13 @@ DISPLAY_COLUMNS = {
     "quantidade_online": "Quantidade On-line",
     "total_presencial": "Total",
 }
+VISITOR_COLUMN = "Quantidade Visitantes"
+VISITOR_COLUMN_CANDIDATES = (
+    "quantidade_visitantes",
+    "quantidadeVisitantes",
+    "quantidade_visitas",
+    "quantidade_visitante",
+)
 NUMERIC_COLUMNS = tuple(
     column for column in DISPLAY_COLUMNS if column.startswith("quantidade_") or column == "total_presencial"
 )
@@ -104,6 +111,19 @@ def _normalize_dashboard_data(rows: list[dict]) -> pd.DataFrame:
 
     for column in [DISPLAY_COLUMNS[name] for name in NUMERIC_COLUMNS]:
         dataframe[column] = pd.to_numeric(dataframe[column], errors="coerce").fillna(0).astype(int)
+
+    visitor_column = next(
+        (
+            column
+            for column in dataframe.columns
+            if str(column).strip().lower() in {candidate.lower() for candidate in VISITOR_COLUMN_CANDIDATES}
+        ),
+        None,
+    )
+    if visitor_column is not None:
+        dataframe[VISITOR_COLUMN] = pd.to_numeric(dataframe[visitor_column], errors="coerce").fillna(0).astype(int)
+    else:
+        dataframe[VISITOR_COLUMN] = 0
     return dataframe
 
 
