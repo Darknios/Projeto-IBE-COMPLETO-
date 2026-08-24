@@ -34,8 +34,22 @@ DEFAULT_SERVICE_TIMES = ["Manhã", "Noite"]
 
 
 def _matches_group_names(value: object, allowed_groups: list[str]) -> bool:
+    """Aceita tanto “1º Domingo” quanto “1ª Domingo” (formato real do histórico)."""
     text = str(value).strip().lower()
-    return any(candidate.lower() in text for candidate in allowed_groups)
+
+    def sunday_number(label: str) -> str | None:
+        match = __import__("re").search(r"(?:^|\s)([1-5])\s*[ºª°oa]?\s*domingo", label.lower())
+        return match.group(1) if match else None
+
+    value_number = sunday_number(text)
+    for candidate in allowed_groups:
+        candidate_text = str(candidate).strip().lower()
+        if candidate_text in text:
+            return True
+        candidate_number = sunday_number(candidate_text)
+        if value_number and candidate_number and value_number == candidate_number:
+            return True
+    return False
 
 
 def format_service_time(value: object) -> str:
@@ -488,6 +502,7 @@ def show_dashboard(
     by_service["Período do culto"] = by_service["Horário do culto"].map(
         lambda value: service_labels.get(str(value).strip().lower(), str(value))
     )
+    by_service = by_service[by_service["Período do culto"] != "Missa"]
     service_chart = px.pie(
         by_service,
         names="Período do culto",
@@ -568,7 +583,10 @@ def show_dashboard(
                 st.plotly_chart(visitors_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
     st.subheader("Quantidades de pessoas por setor")
-    display = period_filtered.sort_values("Data", ascending=False).copy()
+    display = period_filtered.copy()
+    display["Mês"] = display["Data"].dt.month
+    display = display.sort_values(["Mês", "Data"], ascending=[True, True])
+    display = display.drop("Mês", axis=1)
     display["Data"] = display["Data"].dt.strftime("%d/%m/%Y")
     display_columns = [column for column in display.columns if column != VISITORS_COLUMN]
     if "Total" in display_columns:
@@ -703,41 +721,6 @@ except (SupabaseDataError, Exception):
     st.error("Não foi possível consultar as contagens. Verifique a configuração e as permissões do Supabase.")
     st.stop()
 
-domingo_filters = sidebar_filter_group(
-    data,
-    title="Filtro Culto Domingos:",
-    key_prefix="domingo",
-    date_label="Domingo/data",
-    filter_renove=False,
-    exclude_service_values=["Oração", "Cafofo"],
-)
-renove_filters = sidebar_filter_group(
-    data,
-    title="Filtro Culto Renove:",
-    key_prefix="renove",
-    date_label="Data",
-    filter_renove=True,
-    show_service_filter=False,
-)
-quarta_filters = sidebar_filter_group(
-    data,
-    title="Filtro Culto de Quarta-feira:",
-    key_prefix="quarta",
-    date_label="Data",
-    filter_renove=False,
-    show_service_filter=False,
-    weekday_filter=2,
-)
-cafofo_filters = sidebar_filter_group(
-    data,
-    title="Filtro Culto Cafofo:",
-    key_prefix="cafofo",
-    date_label="Data",
-    filter_renove=False,
-    show_service_filter=False,
-    group_contains="Cafofo",
-)
-
 default_filters = {
     "month": ["Todos"],
     "year": ["Todos"],
@@ -748,6 +731,14 @@ default_filters = {
 tabs = st.tabs(["Cultos de Domingo", "Cultos Renove", "Cultos de Quarta-feira", "Cultos do Cafofo"])
 
 with tabs[0]:
+    domingo_filters = sidebar_filter_group(
+        data,
+        title="Filtro Culto Domingos:",
+        key_prefix="domingo",
+        date_label="Domingo/data",
+        filter_renove=False,
+        exclude_service_values=["Oração", "Cafofo"],
+    )
     show_dashboard(
         data,
         key_prefix="domingo",
@@ -759,6 +750,14 @@ with tabs[0]:
     )
 
 with tabs[1]:
+    renove_filters = sidebar_filter_group(
+        data,
+        title="Filtro Culto Renove:",
+        key_prefix="renove",
+        date_label="Data",
+        filter_renove=True,
+        show_service_filter=False,
+    )
     show_dashboard(
         data,
         key_prefix="renove",
@@ -768,6 +767,15 @@ with tabs[1]:
     )
 
 with tabs[2]:
+    quarta_filters = sidebar_filter_group(
+        data,
+        title="Filtro Culto de Quarta-feira:",
+        key_prefix="quarta",
+        date_label="Data",
+        filter_renove=False,
+        show_service_filter=False,
+        weekday_filter=2,
+    )
     show_dashboard(
         data,
         key_prefix="quarta",
@@ -777,6 +785,15 @@ with tabs[2]:
     )
 
 with tabs[3]:
+    cafofo_filters = sidebar_filter_group(
+        data,
+        title="Filtro Culto Cafofo:",
+        key_prefix="cafofo",
+        date_label="Data",
+        filter_renove=False,
+        show_service_filter=False,
+        group_contains="Cafofo",
+    )
     show_dashboard(
         data,
         key_prefix="cafofo",
