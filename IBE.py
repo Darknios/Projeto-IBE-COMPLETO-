@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from io import BytesIO
+import re
+import unicodedata
 
 import pandas as pd
 import plotly.express as px
@@ -12,6 +14,7 @@ from supabase_data import (
     SupabaseDataError,
     get_dashboard_data,
     get_existing_count,
+    get_sector_distribution,
     save_count,
     write_configuration_is_available,
 )
@@ -56,6 +59,21 @@ def format_service_time(value: object) -> str:
     """Keep legacy values in the data while showing clear labels in the UI."""
     labels = {"1": "Manhã", "2": "Noite"}
     return labels.get(str(value).strip(), str(value))
+
+
+def _normalized_sector_name(value: object) -> str:
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = "".join(character for character in text if not unicodedata.combining(character))
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def _sector_total(sector_distribution: pd.DataFrame, *sector_names: str) -> int:
+    """Soma Quantidade para os nomes de setor informados, ignorando variações de escrita."""
+    if sector_distribution.empty or not {"Setor", "Quantidade"}.issubset(sector_distribution.columns):
+        return 0
+    accepted_names = {_normalized_sector_name(name) for name in sector_names}
+    matches = sector_distribution["Setor"].map(_normalized_sector_name).isin(accepted_names)
+    return int(pd.to_numeric(sector_distribution.loc[matches, "Quantidade"], errors="coerce").fillna(0).sum())
 
 
 def dataframe_to_excel(dataframe: pd.DataFrame) -> bytes:
@@ -310,6 +328,7 @@ def _show_dashboard_compact(dataframe: pd.DataFrame) -> None:
 
 def show_dashboard(
     dataframe: pd.DataFrame,
+    sector_distribution: pd.DataFrame,
     key_prefix: str = "dashboard",
     filter_group_contains: str | None = None,
     exclude_group_contains: str | None = None,
@@ -371,8 +390,8 @@ def show_dashboard(
         chart_data = chart_data[chart_data["Data"].dt.weekday != exclude_weekday_from_charts]
 
     total_present = int(chart_data["Total"].sum()) if not chart_data.empty else 0
-    total_online = int(chart_data["Quantidade On-line"].sum()) if not chart_data.empty else 0
-    total_visitors = int(chart_data[VISITORS_COLUMN].sum()) if not chart_data.empty and VISITORS_COLUMN in chart_data.columns else 0
+    total_online = _sector_total(sector_distribution, "Online", "On-line", "Online Culto")
+    total_visitors = _sector_total(sector_distribution, "Visitante", "Visitantes", "Quantidade Visitantes")
     latest_date = chart_data["Data"].max().strftime("%d/%m/%Y") if not chart_data.empty else "-"
     # Render summary cards (gray background, white text)
     st.markdown(
@@ -462,34 +481,23 @@ def show_dashboard(
     online_chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Pessoas")
     st.plotly_chart(online_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
-    sector_labels = {
-        "Quantidade Púlpito": "Púlpito",
-        "Quantidade Cadeiras A": "Cadeiras A",
-        "Quantidade Cadeiras B": "Cadeiras B",
-        "Quantidade Cadeiras C": "Cadeiras C",
-        "Quantidade Cadeiras D": "Cadeiras D",
-        "Quantidade Galeria": "Galeria",
-        "Quantidade Salas": "Salas",
-        "Quantidade Externo": "Externo",
-        "Quantidade On-line": "On-line",
-    }
-    sector_data = pd.DataFrame(
-        {
-            "Setor": list(sector_labels.values()),
-            "Total": [int(filtered[column].sum()) for column in sector_labels],
-        }
-    )
-    sector_chart = px.bar(
-        sector_data,
-        x="Setor",
-        y="Total",
-        text="Total",
-        color="Setor",
-        title="Distribuição de pessoas por setor",
-    )
-    sector_chart.update_traces(textposition="outside", cliponaxis=False)
-    sector_chart.update_layout(showlegend=False, margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Pessoas")
-    st.plotly_chart(sector_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
+    if sector_distribution.empty:
+        if sector_distribution.attrs.get("load_error"):
+            st.warning("Não foi possível consultar os dados de setores em Contagens.")
+        else:
+            st.info("Ainda não há dados de setores em Contagens para exibir.")
+    else:
+        sector_chart = px.bar(
+            sector_distribution,
+            x="Setor",
+            y="Quantidade",
+            text="Quantidade",
+            color="Setor",
+            title="Distribuição de pessoas por setor",
+        )
+        sector_chart.update_traces(textposition="outside", cliponaxis=False)
+        sector_chart.update_layout(showlegend=False, margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Pessoas")
+        st.plotly_chart(sector_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
     by_service = chart_data.groupby("Horário do culto", as_index=False)["Total"].sum()
     service_labels = {
@@ -713,6 +721,7 @@ show_header()
 
 try:
     data = get_dashboard_data(st.secrets)
+    sector_distribution = get_sector_distribution(st.secrets)
 except SupabaseConfigurationError as error:
     st.error(str(error))
     st.info("Use .streamlit/secrets.toml.example como modelo para a configuração local.")
@@ -741,6 +750,7 @@ with tabs[0]:
     )
     show_dashboard(
         data,
+        sector_distribution,
         key_prefix="domingo",
         exclude_group_contains="Renove|Cafofo",
         exclude_weekday_from_charts=2,
@@ -760,6 +770,7 @@ with tabs[1]:
     )
     show_dashboard(
         data,
+        sector_distribution,
         key_prefix="renove",
         filter_group_contains="Renove",
         sidebar_filters=renove_filters,
@@ -778,6 +789,7 @@ with tabs[2]:
     )
     show_dashboard(
         data,
+        sector_distribution,
         key_prefix="quarta",
         weekday=2,
         sidebar_filters=quarta_filters,
@@ -796,6 +808,7 @@ with tabs[3]:
     )
     show_dashboard(
         data,
+        sector_distribution,
         key_prefix="cafofo",
         filter_group_contains="Cafofo",
         sidebar_filters=cafofo_filters,
