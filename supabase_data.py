@@ -633,6 +633,109 @@ def get_dashboard_data(secrets: Mapping[str, str]) -> pd.DataFrame:
     raise SupabaseDataError("As tabelas foram encontradas, mas não há dados compatíveis para exibir.")
 
 
+@st.cache_data(ttl=90, show_spinner=False)
+def load_sector_distribution(url: str, key: str) -> pd.DataFrame:
+    """Une Registros e Contagens para montar a distribuição por setor."""
+    client = create_client(url, key)
+    registros = pd.DataFrame(
+        _fetch_rows(client.table("Registros").select("Id"))
+    )
+    contagens = pd.DataFrame(
+        _fetch_rows(
+            client.table("Contagens").select("RegistroId,NomeSetor,Quantidade")
+        )
+    )
+    if registros.empty or contagens.empty:
+        return pd.DataFrame(columns=["Setor", "Quantidade"])
+
+    joined = pd.merge(
+        registros,
+        contagens,
+        how="inner",
+        left_on="Id",
+        right_on="RegistroId",
+    )
+    if joined.empty:
+        return pd.DataFrame(columns=["Setor", "Quantidade"])
+
+    names = joined.get("NomeSetor", pd.Series(index=joined.index, dtype="object"))
+    quantities = joined.get("Quantidade", pd.Series(index=joined.index, dtype="object"))
+    distribution = pd.DataFrame(
+        {
+            "Setor": names.fillna("Não informado").astype(str).str.strip().replace("", "Não informado"),
+            "Quantidade": pd.to_numeric(quantities, errors="coerce").fillna(0),
+        }
+    )
+    return (
+        distribution.groupby("Setor", as_index=False)["Quantidade"]
+        .sum()
+        .sort_values("Setor")
+        .reset_index(drop=True)
+    )
+
+
+def get_sector_distribution(secrets: Mapping[str, str]) -> pd.DataFrame:
+    """Obtém a distribuição diretamente de Contagens.NomeSetor e Quantidade."""
+    url, keys = _get_read_configuration(secrets)
+    last_error: Exception | None = None
+    for key in keys:
+        try:
+            distribution = load_sector_distribution(url, key)
+        except Exception as error:
+            last_error = error
+            continue
+        if not distribution.empty:
+            return distribution
+
+    empty_distribution = pd.DataFrame(columns=["Setor", "Quantidade"])
+    if last_error:
+        empty_distribution.attrs["load_error"] = True
+    return empty_distribution
+
+
+@st.cache_data(ttl=90, show_spinner=False)
+def load_online_by_reception(url: str, key: str) -> pd.DataFrame:
+    """Carrega a agregação SQL das pessoas on-line por grupo de recepção."""
+    rows = _fetch_rows(
+        create_client(url, key)
+        .table("vw_online_por_grupo_recepcao")
+        .select("grupo_recepcao,quantidade_online")
+    )
+    dataframe = pd.DataFrame(rows)
+    if dataframe.empty:
+        return pd.DataFrame(columns=["Grupo da recepção", "Quantidade On-line"])
+
+    dataframe = dataframe.rename(
+        columns={
+            "grupo_recepcao": "Grupo da recepção",
+            "quantidade_online": "Quantidade On-line",
+        }
+    )
+    dataframe["Quantidade On-line"] = pd.to_numeric(
+        dataframe["Quantidade On-line"], errors="coerce"
+    ).fillna(0)
+    return dataframe.sort_values("Grupo da recepção").reset_index(drop=True)
+
+
+def get_online_by_reception(secrets: Mapping[str, str]) -> pd.DataFrame:
+    """Obtém a soma on-line por grupo de recepção da view SQL."""
+    url, keys = _get_read_configuration(secrets)
+    last_error: Exception | None = None
+    for key in keys:
+        try:
+            dataframe = load_online_by_reception(url, key)
+        except Exception as error:
+            last_error = error
+            continue
+        if not dataframe.empty:
+            return dataframe
+
+    empty_dataframe = pd.DataFrame(columns=["Grupo da recepção", "Quantidade On-line"])
+    if last_error:
+        empty_dataframe.attrs["load_error"] = True
+    return empty_dataframe
+
+
 def get_existing_count(
     secrets: Mapping[str, str], count_date: date, group: str, service_time: str
 ) -> dict | None:
@@ -656,3 +759,5 @@ def save_count(secrets: Mapping[str, str], payload: Mapping[str, object]) -> Non
         dict(payload), on_conflict="data,grupo_recepcao,horario_culto"
     ).execute()
     load_dashboard_data.clear()
+    load_sector_distribution.clear()
+    load_online_by_reception.clear()
