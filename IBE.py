@@ -317,7 +317,7 @@ def _show_dashboard_compact(dataframe: pd.DataFrame) -> None:
 
     by_date = filtered.groupby("Data", as_index=False)["Total"].sum().sort_values("Data")
     chart = px.line(by_date, x="Data", y="Total", markers=True, title="Presença por data")
-    chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Pessoas", xaxis_title="")
+    chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title=" público ", xaxis_title="")
     st.plotly_chart(chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
     with st.expander("Ver lançamentos", expanded=False):
@@ -415,9 +415,9 @@ def show_dashboard(
             x="DataLabel",
             y="Total",
             markers=True,
-            title=f"Total de pessoas por data ({title_suffix})",
+            title=f"Total de público por data ({title_suffix})",
         )
-        chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Total de pessoas", xaxis_title="Data")
+        chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Total de público", xaxis_title="Data")
         st.plotly_chart(chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
         if VISITORS_COLUMN in chart_data.columns:
@@ -444,10 +444,6 @@ def show_dashboard(
         highest_metric.metric("Maior quantidade", int(filtered["Total"].max()))
         lowest_metric.metric("Menor quantidade", int(filtered["Total"].min()))
         count_metric.metric("Número de cultos", len(filtered))
-        visitors_metric.metric(
-            "Total de visitantes",
-            int(filtered[VISITORS_COLUMN].sum()) if VISITORS_COLUMN in filtered.columns else 0,
-        )
         return
 
     by_group = (
@@ -459,10 +455,10 @@ def show_dashboard(
         y="Total",
         markers=True,
         text="Total",
-        title="Evolução do Total de Pessoas por Domingo",
+        title="Evolução do Total de público por Domingo",
     )
     group_chart.update_traces(textposition="top center", cliponaxis=False)
-    group_chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Total de pessoas")
+    group_chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Total de público")
     st.plotly_chart(group_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
     online_by_group = (
@@ -475,28 +471,33 @@ def show_dashboard(
         x="Grupo da recepção",
         y="Quantidade On-line",
         text="Quantidade On-line",
-        title="Pessoas on-line por domingo",
+        title="Quantidade de público on-line por domingo",
     )
     online_chart.update_traces(textposition="outside", cliponaxis=False)
-    online_chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Pessoas")
+    online_chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="público")
     st.plotly_chart(online_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
-    if sector_distribution.empty:
+    hidden_sector_names = {_normalized_sector_name(name) for name in ("Cadeiras", "Congregacao", "Equipe", "Palco")}
+    visible_sector_distribution = sector_distribution.loc[
+        ~sector_distribution["Setor"].map(_normalized_sector_name).isin(hidden_sector_names)
+    ]
+
+    if visible_sector_distribution.empty:
         if sector_distribution.attrs.get("load_error"):
             st.warning("Não foi possível consultar os dados de setores em Contagens.")
         else:
             st.info("Ainda não há dados de setores em Contagens para exibir.")
     else:
         sector_chart = px.bar(
-            sector_distribution,
+            visible_sector_distribution,
             x="Setor",
             y="Quantidade",
             text="Quantidade",
             color="Setor",
-            title="Distribuição de pessoas por setor",
+            title="Distribuição de público por setor",
         )
         sector_chart.update_traces(textposition="outside", cliponaxis=False)
-        sector_chart.update_layout(showlegend=False, margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Pessoas")
+        sector_chart.update_layout(showlegend=False, margin=dict(l=0, r=0, t=80, b=0), yaxis_title="público")
         st.plotly_chart(sector_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
     by_service = chart_data.groupby("Horário do culto", as_index=False)["Total"].sum()
@@ -515,7 +516,7 @@ def show_dashboard(
         by_service,
         names="Período do culto",
         values="Total",
-        title="Total de pessoas por horário de culto (Manhã e Noite)",
+        title="Total de público por horário de culto (Manhã e Noite)",
         color="Período do culto",
         color_discrete_map={"Manhã": "#93c5fd", "Noite": "#1e3a8a"},
     )
@@ -549,10 +550,10 @@ def show_dashboard(
         y="Total",
         markers=True,
         text="Total",
-        title="Evolução do total de pessoas por data",
+        title="Evolução do total de público por data",
     )
     date_chart.update_traces(textposition="top center", cliponaxis=False)
-    date_chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Total de pessoas")
+    date_chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Total de público")
     st.plotly_chart(date_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
     if VISITORS_COLUMN in chart_data.columns:
@@ -590,7 +591,7 @@ def show_dashboard(
                 visitors_chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Quantidade de visitantes", xaxis_title="Data")
                 st.plotly_chart(visitors_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
-    st.subheader("Quantidades de pessoas por setor")
+    st.subheader("Quantidades de público por setor")
     display = period_filtered.copy()
     display["Mês"] = display["Data"].dt.month
     display = display.sort_values(["Mês", "Data"], ascending=[True, True])
@@ -615,10 +616,6 @@ def show_dashboard(
     highest_metric.metric("Maior quantidade", int(period_filtered["Total"].max()))
     lowest_metric.metric("Menor quantidade", int(period_filtered["Total"].min()))
     count_metric.metric("Número de cultos", len(period_filtered))
-    visitors_metric.metric(
-        "Total de visitantes",
-        int(period_filtered[VISITORS_COLUMN].sum()) if VISITORS_COLUMN in period_filtered.columns else 0,
-    )
 
 
 def _entry_credentials_are_valid() -> bool:
