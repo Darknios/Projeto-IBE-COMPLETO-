@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from datetime import date, datetime
 from io import BytesIO
 import re
@@ -147,6 +148,25 @@ st.markdown(
     [data-testid="stSidebar"] [data-baseweb="select"] * { color: #f2f2f4; }
     [data-testid="stSidebar"] [data-baseweb="select"] svg { fill: #f2f2f4; }
     [data-testid="stSidebar"] [data-testid="stElementContainer"]:has(.filter-section) { margin-top: .95rem; }
+    .domingo-filter-logo {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        width: 100%;
+        min-height: 76px;
+        margin-top: 0.8rem;
+        padding: 0.2rem 0 0.3rem;
+        border-radius: 12px;
+        background: transparent;
+    }
+    .domingo-filter-logo img {
+        display: block;
+        width: 58px !important;
+        height: 58px !important;
+        object-fit: contain;
+        opacity: 0.95;
+        filter: none;
+    }
     /* footer logo removed */
     @media (max-width: 768px) {
         [data-testid="stSidebar"] { min-width: min(230px, 82vw) !important; max-width: min(230px, 82vw) !important; }
@@ -190,6 +210,22 @@ def show_header() -> None:
             )
 
 
+def render_domingo_filter_logo() -> None:
+    try:
+        with open("favicon-192x192.png", "rb") as image_file:
+            encoded = base64.b64encode(image_file.read()).decode("utf-8")
+        st.markdown(
+            """
+            <div class="domingo-filter-logo">
+                <img src="data:image/png;base64,%s" alt="IBE logo" />
+            </div>
+            """ % encoded,
+            unsafe_allow_html=True,
+        )
+    except FileNotFoundError:
+        pass
+
+
 def sidebar_filter_group(
     dataframe: pd.DataFrame,
     title: str,
@@ -200,6 +236,7 @@ def sidebar_filter_group(
     weekday_filter: int | None = None,
     exclude_service_values: list[str] | None = None,
     group_contains: str | None = None,
+    render_in_tab: bool = False,
 ) -> dict[str, list]:
     df = dataframe.copy()
     df["Mês"] = df["Data"].dt.month
@@ -214,44 +251,99 @@ def sidebar_filter_group(
         df = df[df["Data"].dt.weekday == weekday_filter]
 
     available_dates = sorted(df["Data"].dt.date.unique().tolist())
-
-    st.sidebar.markdown(f"<div class='filters-title'>{title}</div>", unsafe_allow_html=True)
-    selected_month = st.sidebar.multiselect(
-        "Mês",
-        ["Todos"] + sorted(df["Mês"].unique().tolist()),
-        default=["Todos"],
-        key=f"{key_prefix}_month",
-    )
-    selected_year = st.sidebar.multiselect(
-        "Ano",
-        ["Todos"] + sorted(df["Ano"].unique().tolist()),
-        default=["Todos"],
-        key=f"{key_prefix}_year",
-    )
-    selected_date = st.sidebar.multiselect(
-        date_label,
-        ["Todos"] + available_dates,
-        default=["Todos"],
-        format_func=lambda value: value.strftime("%d/%m/%Y") if value != "Todos" else value,
-        key=f"{key_prefix}_date",
-    )
-    selected_service = ["Todos"]
-    if show_service_filter:
-        available_services = sorted(df["Horário do culto"].dropna().unique().tolist())
-        if exclude_service_values:
-            exclude_lower = [value.lower() for value in exclude_service_values]
-            available_services = [
-                value
-                for value in available_services
-                if str(value).lower() not in exclude_lower
-            ]
-        selected_service = st.sidebar.multiselect(
-            "Horário do culto",
-            ["Todos"] + available_services,
+    if render_in_tab:
+        expander_label = title.strip().rstrip(":")
+        expander_label = expander_label.replace("Filtro ", "Filtros - ")
+        with st.expander(expander_label, expanded=False):
+            selectors = []
+            selectors.append(
+                ("Mês", st.multiselect,
+                 ["Todos"] + sorted(df["Mês"].unique().tolist()),
+                 ["Todos"],
+                 {"key": f"{key_prefix}_month"})
+            )
+            selectors.append(
+                ("Ano", st.multiselect,
+                 ["Todos"] + sorted(df["Ano"].unique().tolist()),
+                 ["Todos"],
+                 {"key": f"{key_prefix}_year"})
+            )
+            selectors.append(
+                (date_label, st.multiselect,
+                 ["Todos"] + available_dates,
+                 ["Todos"],
+                 {"format_func": lambda value: value.strftime("%d/%m/%Y") if value != "Todos" else value,
+                  "key": f"{key_prefix}_date"})
+            )
+            selected_service = ["Todos"]
+            if show_service_filter:
+                available_services = sorted(df["Horário do culto"].dropna().unique().tolist())
+                if exclude_service_values:
+                    exclude_lower = [value.lower() for value in exclude_service_values]
+                    available_services = [
+                        value
+                        for value in available_services
+                        if str(value).lower() not in exclude_lower
+                    ]
+                selectors.append(
+                    ("Horário do culto", st.multiselect,
+                     ["Todos"] + available_services,
+                     ["Todos"],
+                     {"format_func": lambda value: value if value == "Todos" else format_service_time(value),
+                      "key": f"{key_prefix}_service"})
+                )
+            columns = st.columns(len(selectors))
+            selected_values = {}
+            for index, (label, control, options, default, kwargs) in enumerate(selectors):
+                if label == "Horário do culto" and "key" in kwargs:
+                    with columns[index]:
+                        selected_values[label] = control(label, options, default=default, **kwargs)
+                else:
+                    with columns[index]:
+                        selected_values[label] = control(label, options, default=default, **kwargs)
+            selected_month = selected_values["Mês"]
+            selected_year = selected_values["Ano"]
+            selected_date = selected_values[date_label]
+            selected_service = selected_values.get("Horário do culto", ["Todos"])
+    else:
+        container = st.sidebar
+        container.markdown(f"<div class='filters-title'>{title}</div>", unsafe_allow_html=True)
+        selected_month = container.multiselect(
+            "Mês",
+            ["Todos"] + sorted(df["Mês"].unique().tolist()),
             default=["Todos"],
-            format_func=lambda value: value if value == "Todos" else format_service_time(value),
-            key=f"{key_prefix}_service",
+            key=f"{key_prefix}_month",
         )
+        selected_year = container.multiselect(
+            "Ano",
+            ["Todos"] + sorted(df["Ano"].unique().tolist()),
+            default=["Todos"],
+            key=f"{key_prefix}_year",
+        )
+        selected_date = container.multiselect(
+            date_label,
+            ["Todos"] + available_dates,
+            default=["Todos"],
+            format_func=lambda value: value.strftime("%d/%m/%Y") if value != "Todos" else value,
+            key=f"{key_prefix}_date",
+        )
+        selected_service = ["Todos"]
+        if show_service_filter:
+            available_services = sorted(df["Horário do culto"].dropna().unique().tolist())
+            if exclude_service_values:
+                exclude_lower = [value.lower() for value in exclude_service_values]
+                available_services = [
+                    value
+                    for value in available_services
+                    if str(value).lower() not in exclude_lower
+                ]
+            selected_service = container.multiselect(
+                "Horário do culto",
+                ["Todos"] + available_services,
+                default=["Todos"],
+                format_func=lambda value: value if value == "Todos" else format_service_time(value),
+                key=f"{key_prefix}_service",
+            )
     return {
         "month": selected_month,
         "year": selected_year,
@@ -337,6 +429,7 @@ def show_dashboard(
     sidebar_filters: dict[str, list] | None = None,
     allowed_groups: list[str] | None = None,
     visitors_chart_mode: str = "data",
+    show_online_summary: bool = True,
 ) -> None:
     """Restaura a análise completa do dashboard original usando dados do Supabase."""
     st.markdown("<h2 class='dashboard-title'>Dashboard de frequência</h2>", unsafe_allow_html=True)
@@ -394,11 +487,16 @@ def show_dashboard(
     total_visitors = _sector_total(sector_distribution, "Visitante", "Visitantes", "Quantidade Visitantes")
     latest_date = chart_data["Data"].max().strftime("%d/%m/%Y") if not chart_data.empty else "-"
     # Render summary cards (gray background, white text)
+    online_card_html = (
+        f'<div class="summary-card"><div class="label">Total on-line</div><div class="value">{total_online}</div></div>'
+        if show_online_summary
+        else ""
+    )
     st.markdown(
         f"""
         <div class="summary-cards">
           <div class="summary-card"><div class="label">Total presencial</div><div class="value">{total_present}</div></div>
-          <div class="summary-card"><div class="label">Total on-line</div><div class="value">{total_online}</div></div>
+          {online_card_html}
           <div class="summary-card"><div class="label">Total visitantes</div><div class="value">{total_visitors}</div></div>
           <div class="summary-card"><div class="label">Última contagem</div><div class="value">{latest_date}</div></div>
         </div>
@@ -764,6 +862,7 @@ with tabs[1]:
         date_label="Data",
         filter_renove=True,
         show_service_filter=False,
+        render_in_tab=True,
     )
     show_dashboard(
         data,
@@ -772,6 +871,7 @@ with tabs[1]:
         filter_group_contains="Renove",
         sidebar_filters=renove_filters,
         visitors_chart_mode="data",
+        show_online_summary=False,
     )
 
 with tabs[2]:
@@ -783,6 +883,7 @@ with tabs[2]:
         filter_renove=False,
         show_service_filter=False,
         weekday_filter=2,
+        render_in_tab=True,
     )
     show_dashboard(
         data,
@@ -791,6 +892,7 @@ with tabs[2]:
         weekday=2,
         sidebar_filters=quarta_filters,
         visitors_chart_mode="data",
+        show_online_summary=False,
     )
 
 with tabs[3]:
@@ -802,6 +904,7 @@ with tabs[3]:
         filter_renove=False,
         show_service_filter=False,
         group_contains="Cafofo",
+        render_in_tab=True,
     )
     show_dashboard(
         data,
@@ -810,5 +913,6 @@ with tabs[3]:
         filter_group_contains="Cafofo",
         sidebar_filters=cafofo_filters,
         visitors_chart_mode="data",
+        show_online_summary=False,
     )
     
