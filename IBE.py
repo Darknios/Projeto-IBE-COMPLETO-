@@ -278,13 +278,12 @@ def sidebar_filter_group(
             selected_service = ["Todos"]
             if show_service_filter:
                 available_services = sorted(df["Horário do culto"].dropna().unique().tolist())
+                excluded_services = {"k9", "missa", "culto da juventude"}
                 if exclude_service_values:
-                    exclude_lower = [value.lower() for value in exclude_service_values]
-                    available_services = [
-                        value
-                        for value in available_services
-                        if str(value).lower() not in exclude_lower
-                    ]
+                    excluded_services.update(str(value).strip().lower() for value in exclude_service_values)
+                available_services = [
+                    value for value in available_services if str(value).strip().lower() not in excluded_services
+                ]
                 selectors.append(
                     ("Horário do culto", st.multiselect,
                      ["Todos"] + available_services,
@@ -330,13 +329,12 @@ def sidebar_filter_group(
         selected_service = ["Todos"]
         if show_service_filter:
             available_services = sorted(df["Horário do culto"].dropna().unique().tolist())
+            excluded_services = {"k9", "missa", "culto da juventude"}
             if exclude_service_values:
-                exclude_lower = [value.lower() for value in exclude_service_values]
-                available_services = [
-                    value
-                    for value in available_services
-                    if str(value).lower() not in exclude_lower
-                ]
+                excluded_services.update(str(value).strip().lower() for value in exclude_service_values)
+            available_services = [
+                value for value in available_services if str(value).strip().lower() not in excluded_services
+            ]
             selected_service = container.multiselect(
                 "Horário do culto",
                 ["Todos"] + available_services,
@@ -372,7 +370,12 @@ def _show_dashboard_compact(dataframe: pd.DataFrame) -> None:
     )
     selected_service = st.sidebar.multiselect(
         "Horário do culto",
-        ["Todos"] + sorted(dataframe["Horário do culto"].dropna().unique().tolist()),
+        ["Todos"]
+        + [
+            value
+            for value in sorted(dataframe["Horário do culto"].dropna().unique().tolist())
+            if str(value).strip().lower() not in {"k9", "missa", "culto da juventude"}
+        ],
         default=["Todos"],
         format_func=lambda value: value if value == "Todos" else format_service_time(value),
         key="compact_service",
@@ -428,7 +431,6 @@ def show_dashboard(
     exclude_weekday_from_charts: int | None = None,
     sidebar_filters: dict[str, list] | None = None,
     allowed_groups: list[str] | None = None,
-    visitors_chart_mode: str = "data",
     show_online_summary: bool = True,
 ) -> None:
     """Restaura a análise completa do dashboard original usando dados do Supabase."""
@@ -518,24 +520,6 @@ def show_dashboard(
         chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Total de público", xaxis_title="Data")
         st.plotly_chart(chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
-        if VISITORS_COLUMN in chart_data.columns:
-            visitors_by_date = (
-                chart_data.groupby("Data", as_index=False)[VISITORS_COLUMN].sum().sort_values("Data")
-            )
-            visitors_by_date["DataLabel"] = visitors_by_date["Data"].dt.strftime("%d/%m")
-            if not visitors_by_date.empty:
-                visitors_chart = px.line(
-                    visitors_by_date,
-                    x="DataLabel",
-                    y=VISITORS_COLUMN,
-                    markers=True,
-                    text=VISITORS_COLUMN,
-                    title="Evolução de visitantes por data",
-                )
-                visitors_chart.update_traces(textposition="top center", cliponaxis=False)
-                visitors_chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Quantidade de visitantes", xaxis_title="Data")
-                st.plotly_chart(visitors_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
-
         st.subheader("Métricas")
         average_metric, highest_metric, lowest_metric, count_metric, visitors_metric = st.columns(5)
         average_metric.metric("Média por culto", f"{filtered['Total'].mean():.0f}")
@@ -621,6 +605,45 @@ def show_dashboard(
     service_chart.update_layout(margin=dict(l=0, r=0, t=80, b=0))
     st.plotly_chart(service_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
+    average_data = chart_data.copy()
+    average_data["Período do culto"] = average_data["Horário do culto"].map(
+        lambda value: service_labels.get(str(value).strip().lower(), str(value))
+    )
+    average_by_service = (
+        average_data.groupby("Período do culto", as_index=False)["Total"]
+        .mean()
+        .sort_values("Período do culto")
+    )
+    average_by_service = average_by_service[average_by_service["Período do culto"] != "Missa"]
+    if not average_by_service.empty:
+        average_service_chart = px.bar(
+            average_by_service,
+            x="Total",
+            y="Período do culto",
+            text="Total",
+            title="Média de pessoas por culto",
+            orientation="h",
+            color="Período do culto",
+            color_discrete_map={"Manhã": "#19c7b1", "Noite": "#123b66"},
+        )
+        average_service_chart.update_traces(
+            texttemplate="%{text:.0f}",
+            textposition="outside",
+            cliponaxis=False,
+        )
+        average_service_chart.update_layout(
+            showlegend=False,
+            margin=dict(l=0, r=0, t=80, b=0),
+            yaxis_title="Média de pessoas",
+            xaxis_title="Quantidade média de pessoas",
+            yaxis=dict(categoryorder="array", categoryarray=["Noite", "Manhã"]),
+        )
+        st.plotly_chart(
+            average_service_chart,
+            use_container_width=True,
+            config={"displayModeBar": True, "responsive": True},
+        )
+
     st.subheader("Evolução por período")
     period_start_column, period_end_column = st.columns(2)
     with period_start_column:
@@ -653,41 +676,6 @@ def show_dashboard(
     date_chart.update_traces(textposition="top center", cliponaxis=False)
     date_chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Total de público")
     st.plotly_chart(date_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
-
-    if VISITORS_COLUMN in chart_data.columns:
-        if visitors_chart_mode == "group":
-            visitors_by_group = (
-                chart_data.groupby("Grupo da recepção", as_index=False)[VISITORS_COLUMN].sum().sort_values("Grupo da recepção")
-            )
-            if not visitors_by_group.empty:
-                visitors_chart = px.line(
-                    visitors_by_group,
-                    x="Grupo da recepção",
-                    y=VISITORS_COLUMN,
-                    markers=True,
-                    text=VISITORS_COLUMN,
-                    title="Evolução de visitantes por grupo de recepção",
-                )
-                visitors_chart.update_traces(textposition="top center", cliponaxis=False)
-                visitors_chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Quantidade de visitantes", xaxis_title="Grupo de recepção")
-                st.plotly_chart(visitors_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
-        else:
-            visitors_by_date = (
-                chart_data.groupby("Data", as_index=False)[VISITORS_COLUMN].sum().sort_values("Data")
-            )
-            visitors_by_date["DataLabel"] = visitors_by_date["Data"].dt.strftime("%d/%m")
-            if not visitors_by_date.empty:
-                visitors_chart = px.line(
-                    visitors_by_date,
-                    x="DataLabel",
-                    y=VISITORS_COLUMN,
-                    markers=True,
-                    text=VISITORS_COLUMN,
-                    title="Evolução de visitantes por data",
-                )
-                visitors_chart.update_traces(textposition="top center", cliponaxis=False)
-                visitors_chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Quantidade de visitantes", xaxis_title="Data")
-                st.plotly_chart(visitors_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
     st.subheader("Quantidades de público por setor")
     display = period_filtered.copy()
@@ -851,7 +839,6 @@ with tabs[0]:
         exclude_weekday_from_charts=2,
         sidebar_filters=domingo_filters,
         allowed_groups=DEFAULT_GROUPS,
-        visitors_chart_mode="group",
     )
 
 with tabs[1]:
@@ -870,7 +857,6 @@ with tabs[1]:
         key_prefix="renove",
         filter_group_contains="Renove",
         sidebar_filters=renove_filters,
-        visitors_chart_mode="data",
         show_online_summary=False,
     )
 
@@ -891,7 +877,6 @@ with tabs[2]:
         key_prefix="quarta",
         weekday=2,
         sidebar_filters=quarta_filters,
-        visitors_chart_mode="data",
         show_online_summary=False,
     )
 
@@ -912,7 +897,6 @@ with tabs[3]:
         key_prefix="cafofo",
         filter_group_contains="Cafofo",
         sidebar_filters=cafofo_filters,
-        visitors_chart_mode="data",
         show_online_summary=False,
     )
     
