@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import html
 from datetime import date, datetime
 from io import BytesIO
 import re
@@ -19,6 +20,7 @@ from supabase_data import (
     save_count,
     write_configuration_is_available,
 )
+from auth import current_user, logout, require_dashboard_login
 
 
 COUNT_FIELDS = (
@@ -75,6 +77,33 @@ def _sector_total(sector_distribution: pd.DataFrame, *sector_names: str) -> int:
     accepted_names = {_normalized_sector_name(name) for name in sector_names}
     matches = sector_distribution["Setor"].map(_normalized_sector_name).isin(accepted_names)
     return int(pd.to_numeric(sector_distribution.loc[matches, "Quantidade"], errors="coerce").fillna(0).sum())
+
+
+def _sector_distribution_from_dashboard(dataframe: pd.DataFrame) -> pd.DataFrame:
+    """Monta a distribuição por setor a partir das mesmas linhas já filtradas.
+
+    Isso evita uma segunda consulta frágil ao Supabase e, principalmente, faz o
+    gráfico respeitar mês/ano/data/horário selecionados.
+    """
+    mapping = [
+        ("Quantidade Púlpito", "Púlpito"),
+        ("Quantidade Cadeiras A", "Cadeiras A"),
+        ("Quantidade Cadeiras B", "Cadeiras B"),
+        ("Quantidade Cadeiras C", "Cadeiras C"),
+        ("Quantidade Cadeiras D", "Cadeiras D"),
+        ("Quantidade Galeria", "Galeria"),
+        ("Quantidade Salas", "Salas"),
+        ("Quantidade Externo", "Externo"),
+        ("Quantidade On-line", "On-line"),
+        (VISITORS_COLUMN, "Visitantes"),
+    ]
+    rows: list[dict[str, object]] = []
+    for column, label in mapping:
+        if column not in dataframe.columns:
+            continue
+        value = int(pd.to_numeric(dataframe[column], errors="coerce").fillna(0).sum())
+        rows.append({"Setor": label, "Quantidade": value})
+    return pd.DataFrame(rows, columns=["Setor", "Quantidade"])
 
 
 def dataframe_to_excel(dataframe: pd.DataFrame) -> bytes:
@@ -485,8 +514,16 @@ def show_dashboard(
         chart_data = chart_data[chart_data["Data"].dt.weekday != exclude_weekday_from_charts]
 
     total_present = int(chart_data["Total"].sum()) if not chart_data.empty else 0
-    total_online = _sector_total(sector_distribution, "Online", "On-line", "Online Culto")
-    total_visitors = _sector_total(sector_distribution, "Visitante", "Visitantes", "Quantidade Visitantes")
+    total_online = (
+        int(pd.to_numeric(chart_data["Quantidade On-line"], errors="coerce").fillna(0).sum())
+        if "Quantidade On-line" in chart_data.columns and not chart_data.empty
+        else 0
+    )
+    total_visitors = (
+        int(pd.to_numeric(chart_data[VISITORS_COLUMN], errors="coerce").fillna(0).sum())
+        if VISITORS_COLUMN in chart_data.columns and not chart_data.empty
+        else 0
+    )
     latest_date = chart_data["Data"].max().strftime("%d/%m/%Y") if not chart_data.empty else "-"
     # Render summary cards (gray background, white text)
     online_card_html = (
@@ -559,16 +596,23 @@ def show_dashboard(
     online_chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="público")
     st.plotly_chart(online_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
+    # Usa as próprias linhas filtradas para a distribuição. Assim o gráfico não
+    # quebra se a consulta auxiliar a Contagens estiver bloqueada pelo RLS.
+    current_sector_distribution = _sector_distribution_from_dashboard(chart_data)
+    if current_sector_distribution.empty and not sector_distribution.empty:
+        current_sector_distribution = sector_distribution.copy()
+
     hidden_sector_names = {_normalized_sector_name(name) for name in ("Cadeiras", "Congregacao", "Equipe", "Palco")}
-    visible_sector_distribution = sector_distribution.loc[
-        ~sector_distribution["Setor"].map(_normalized_sector_name).isin(hidden_sector_names)
-    ]
+    visible_sector_distribution = current_sector_distribution.loc[
+        ~current_sector_distribution["Setor"].map(_normalized_sector_name).isin(hidden_sector_names)
+    ] if not current_sector_distribution.empty else current_sector_distribution
+    if not visible_sector_distribution.empty:
+        visible_sector_distribution = visible_sector_distribution[
+            pd.to_numeric(visible_sector_distribution["Quantidade"], errors="coerce").fillna(0) > 0
+        ]
 
     if visible_sector_distribution.empty:
-        if sector_distribution.attrs.get("load_error"):
-            st.warning("Não foi possível consultar os dados de setores em Contagens.")
-        else:
-            st.info("Ainda não há dados de setores em Contagens para exibir.")
+        st.info("Ainda não há dados de setores para os filtros escolhidos.")
     else:
         sector_chart = px.bar(
             visible_sector_distribution,
@@ -807,18 +851,41 @@ def show_entry_form(dataframe: pd.DataFrame) -> None:
             st.error("Não foi possível salvar agora. Confira a conexão e tente novamente.")
 
 
+if not require_dashboard_login(st.secrets):
+    st.stop()
+
+auth_user = current_user() or {}
+with st.sidebar:
+    safe_name = html.escape(str(auth_user.get("name") or auth_user.get("email") or "Usuário"))
+    safe_role = html.escape(str(auth_user.get("role") or ""))
+    st.markdown(
+        f"<div style='border:1px solid #d5d8df;border-radius:9px;padding:.65rem .7rem;margin-bottom:.7rem;'><strong>{safe_name}</strong><br><span style='font-size:.75rem;color:#6b7280;'>{safe_role}</span></div>",
+        unsafe_allow_html=True,
+    )
+    if st.button("Sair do painel", use_container_width=True, key="dashboard_logout"):
+        logout()
+        st.rerun()
+
 initialize_entry_state()
 show_header()
 
+access_token = str(auth_user.get("access_token") or "")
+church_id = str(auth_user.get("church_id") or "")
 try:
-    data = get_dashboard_data(st.secrets)
-    sector_distribution = get_sector_distribution(st.secrets)
+    data = get_dashboard_data(
+        st.secrets,
+        access_token=access_token,
+        church_id=church_id,
+    )
+    # A distribuição e os cartões usam as MESMAS linhas ao vivo do dashboard.
+    # Assim visitantes/on-line respeitam a aba e os filtros sem uma segunda consulta.
+    sector_distribution = _sector_distribution_from_dashboard(data)
 except SupabaseConfigurationError as error:
     st.error(str(error))
     st.info("Use .streamlit/secrets.toml.example como modelo para a configuração local.")
     st.stop()
 except (SupabaseDataError, Exception):
-    st.error("Não foi possível consultar as contagens. Verifique a configuração e as permissões do Supabase.")
+    st.error("Não foi possível carregar os dados ao vivo do Supabase. Verifique as permissões da conta e tente novamente.")
     st.stop()
 
 default_filters = {
@@ -865,7 +932,7 @@ with tabs[1]:
         key_prefix="renove",
         filter_group_contains="Renove",
         sidebar_filters=renove_filters,
-        show_online_summary=False,
+        show_online_summary=True,
     )
 
 with tabs[2]:
@@ -885,7 +952,7 @@ with tabs[2]:
         key_prefix="quarta",
         weekday=2,
         sidebar_filters=quarta_filters,
-        show_online_summary=False,
+        show_online_summary=True,
     )
 
 with tabs[3]:
@@ -905,6 +972,6 @@ with tabs[3]:
         key_prefix="cafofo",
         filter_group_contains="Cafofo",
         sidebar_filters=cafofo_filters,
-        show_online_summary=False,
+        show_online_summary=True,
     )
     
