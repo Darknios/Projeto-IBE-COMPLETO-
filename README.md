@@ -2,6 +2,8 @@
 
 Aplicativo Streamlit para consultar e lançar as contagens dos cultos de domingo da Igreja Batista Emanuel. O dashboard é público; a tela de lançamento tem acesso temporário restrito à recepção e foi pensada para uso no celular.
 
+Link do projeto: https://recepcao-ibe.streamlit.app/
+
 ## Primeiro uso no Supabase
 
 1. No **SQL Editor** do Supabase, execute [`supabase/001_ibe_contagens.sql`](supabase/001_ibe_contagens.sql).
@@ -17,7 +19,7 @@ pip install -r requirements.txt
 streamlit run IBE.py
 ```
 
-No Streamlit Cloud, cadastre os mesmos valores de `.streamlit/secrets.toml.example` em **App settings → Secrets**. O valor `SUPABASE_TABLE = "auto"` faz o app localizar automaticamente a estrutura disponível (`ibe_contagens`, `Contagens/Cultos` ou `Registros/Setores`).
+No Streamlit Cloud, cadastre os mesmos valores de `.streamlit/secrets.toml.example` em **App settings → Secrets**.
 
 ## Acesso temporário ao lançamento
 
