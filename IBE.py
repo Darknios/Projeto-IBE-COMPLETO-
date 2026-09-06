@@ -633,10 +633,18 @@ def show_dashboard(
         )
         average_service_chart.update_layout(
             showlegend=False,
-            margin=dict(l=0, r=0, t=80, b=0),
+            margin=dict(l=72, r=48, t=80, b=12),
             yaxis_title="Média de pessoas",
             xaxis_title="Quantidade média de pessoas",
-            yaxis=dict(categoryorder="array", categoryarray=["Noite", "Manhã"]),
+            yaxis=dict(
+                categoryorder="array",
+                categoryarray=["Noite", "Manhã"],
+                automargin=True,
+            ),
+            xaxis=dict(
+                range=[0, max(float(average_by_service["Total"].max()) * 1.18, 1)],
+                automargin=True,
+            ),
         )
         st.plotly_chart(
             average_service_chart,
