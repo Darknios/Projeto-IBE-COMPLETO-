@@ -9,6 +9,10 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from types import SimpleNamespace
+from urllib.parse import quote
+
+import requests
 from collections.abc import Mapping
 from datetime import date
 from pathlib import Path
@@ -74,21 +78,100 @@ def _unique_strings(values) -> list[str]:
     return result
 
 
-def _get_read_configuration(secrets: Mapping[str, str]) -> tuple[str, list[str]]:
+def _get_read_configuration(
+    secrets: Mapping[str, str],
+    *,
+    access_token: str | None = None,
+) -> tuple[str, list[str]]:
+    """Retorna URL + API keys adequadas ao tipo de leitura.
+
+    Depois do login preferimos SEMPRE a chave pública junto do JWT do usuário.
+    Assim a leitura passa pelas policies RLS do papel ``authenticated`` e não
+    depende da service_role para o dashboard. A service_role fica reservada a
+    operações de servidor/gravação.
+    """
     url = str(_get_optional_secret(secrets, "SUPABASE_URL") or PUBLIC_DASHBOARD_URL).strip()
-    keys = _unique_strings(
-        [
-            # A chave de servidor fica apenas no backend Streamlit e evita bloqueios de RLS.
-            _get_optional_secret(secrets, "SUPABASE_SERVICE_ROLE_KEY"),
-            _get_optional_secret(secrets, "SUPABASE_ANON_KEY"),
-            _get_optional_secret(secrets, "SUPABASE_KEY"),
-            PUBLIC_DASHBOARD_KEY,
-            LEGACY_PUBLIC_DASHBOARD_KEY,
-        ]
-    )
+    if access_token:
+        keys = _unique_strings(
+            [
+                _get_optional_secret(secrets, "SUPABASE_ANON_KEY"),
+                _get_optional_secret(secrets, "SUPABASE_KEY"),
+                PUBLIC_DASHBOARD_KEY,
+                LEGACY_PUBLIC_DASHBOARD_KEY,
+            ]
+        )
+    else:
+        keys = _unique_strings(
+            [
+                _get_optional_secret(secrets, "SUPABASE_SERVICE_ROLE_KEY"),
+                _get_optional_secret(secrets, "SUPABASE_ANON_KEY"),
+                _get_optional_secret(secrets, "SUPABASE_KEY"),
+                PUBLIC_DASHBOARD_KEY,
+                LEGACY_PUBLIC_DASHBOARD_KEY,
+            ]
+        )
     if not url or not keys:
         raise SupabaseConfigurationError("Configuração do Supabase incompleta.")
     return url, keys
+
+
+def _read_client(url: str, key: str, access_token: str | None = None):
+    """Cria cliente de leitura.
+
+    Com usuário logado usamos REST diretamente com ``Authorization: Bearer``.
+    Isso evita perder o JWT entre o Supabase Auth e o PostgREST em reruns do
+    Streamlit, que era o motivo de cair no histórico local.
+    """
+    if access_token:
+        return _AuthenticatedRestClient(url, key, access_token)
+    return create_client(url, key)
+
+
+class _AuthenticatedRestQuery:
+    def __init__(self, url: str, table: str, headers: dict[str, str]):
+        self.url = f"{url.rstrip('/')}/rest/v1/{quote(table, safe='')}"
+        self.headers = headers
+        self.params: dict[str, object] = {}
+
+    def select(self, columns: str = "*"):
+        self.params["select"] = columns or "*"
+        return self
+
+    def range(self, start: int, end: int):
+        self.params["offset"] = max(0, int(start))
+        self.params["limit"] = max(0, int(end) - int(start) + 1)
+        return self
+
+    def eq(self, column: str, value: object):
+        self.params[column] = f"eq.{value}"
+        return self
+
+    def order(self, column: str, desc: bool = False):
+        self.params["order"] = f"{column}.{'desc' if desc else 'asc'}"
+        return self
+
+    def limit(self, count: int):
+        self.params["limit"] = int(count)
+        return self
+
+    def execute(self):
+        response = requests.get(self.url, headers=self.headers, params=self.params, timeout=25)
+        response.raise_for_status()
+        payload = response.json()
+        return SimpleNamespace(data=payload if isinstance(payload, list) else [])
+
+
+class _AuthenticatedRestClient:
+    def __init__(self, url: str, key: str, access_token: str):
+        self.url = url
+        self.headers = {
+            "apikey": key,
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        }
+
+    def table(self, table: str):
+        return _AuthenticatedRestQuery(self.url, table, self.headers)
 
 
 def _get_write_configuration(secrets: Mapping[str, str]) -> tuple[str, str, str]:
@@ -145,6 +228,27 @@ def _foreign_id(row: Mapping[str, object], entity: str) -> object | None:
         entity,
     )
 
+
+
+def _row_church_id(row: Mapping[str, object] | None) -> str | None:
+    if not row:
+        return None
+    value = _lookup(
+        row,
+        "IgrejaId", "Igreja_id", "igreja_id", "IdIgreja", "id_igreja",
+        "ChurchId", "church_id", "TenantId", "tenant_id",
+    )
+    if value in (None, ""):
+        return None
+    return str(value).strip()
+
+
+def _row_is_allowed_for_church(row: Mapping[str, object] | None, church_id: str | None) -> bool:
+    """Impede que uma linha explicitamente vinculada a outra igreja seja exibida."""
+    if not church_id:
+        return True
+    row_church = _row_church_id(row)
+    return row_church is None or row_church == str(church_id).strip()
 
 def _number(value: object) -> int:
     if value in (None, ""):
@@ -213,12 +317,14 @@ SECTOR_TARGETS = {
     "online": "quantidade_online",
     "onlineculto": "quantidade_online",
 }
-VISITOR_NAMES = {"visitante", "visitantes", "quantidadevisitantes"}
+VISITOR_NAMES = {"visitante", "visitantes"}
 
 
 def _sector_target(name: object) -> str | None:
     key = _canonical(name)
-    if key in VISITOR_NAMES or "visitant" in key:
+    # Visitantes vem SOMENTE da linha de Contagens cujo NomeSetor é
+    # exatamente "Visitante"/"Visitantes" (ignorando caixa e acentos).
+    if key in VISITOR_NAMES:
         return "quantidade_visitantes"
     if key in SECTOR_TARGETS:
         return SECTOR_TARGETS[key]
@@ -300,6 +406,16 @@ def _extract_date(row: Mapping[str, object]) -> object | None:
 
 
 def _extract_group(*rows: Mapping[str, object]) -> str | None:
+    # Alguns registros guardam Renove/Cafofo apenas no nome do culto, e não no
+    # campo GrupoRecepcao. Detectamos isso antes para que as abas voltem a
+    # separar corretamente esses cultos.
+    for row in rows:
+        name_like = _lookup(row, "NomeCulto", "CultoNome", "Nome", "Titulo", "TipoCulto", "Descricao")
+        key = _canonical(name_like)
+        if "renove" in key:
+            return "Renove"
+        if "cafofo" in key:
+            return "Cafofo"
     for row in rows:
         value = _lookup(
             row,
@@ -466,7 +582,7 @@ def _normalize_rows(rows: list[dict]) -> pd.DataFrame:
     return dataframe
 
 
-def _load_relational_dashboard_data(client: object) -> pd.DataFrame:
+def _load_relational_dashboard_data(client: object, church_id: str | None = None) -> pd.DataFrame:
     """Lê as tabelas reais do banco e monta a visão larga usada pelo dashboard."""
     tables = {name: _fetch_table(client, name) for name in KNOWN_TABLES}
     contagens = tables["Contagens"]
@@ -485,6 +601,10 @@ def _load_relational_dashboard_data(client: object) -> pd.DataFrame:
         contagem_id = _row_id(contagem)
         culto_id = _foreign_id(contagem, "Culto")
         culto = cultos_by_id.get(str(culto_id), {}) if culto_id is not None else {}
+        if not _row_is_allowed_for_church(contagem, church_id):
+            continue
+        if not _row_is_allowed_for_church(culto, church_id):
+            continue
 
         row = _base_normalized_row()
         row["data"] = _extract_date(contagem) or _extract_date(culto)
@@ -498,6 +618,8 @@ def _load_relational_dashboard_data(client: object) -> pd.DataFrame:
             row["total_presencial"] = _number(direct_total)
 
         linked = _related_rows(registros, "Contagem", contagem_id)
+        if church_id:
+            linked = [item for item in linked if _row_is_allowed_for_church(item, church_id)]
         # Alguns modelos chamaram a FK de RegistroId dentro de Setores, então também
         # lidamos com o arranjo inverso mais abaixo.
         _apply_registros(row, linked, setores_by_id)
@@ -509,29 +631,63 @@ def _load_relational_dashboard_data(client: object) -> pd.DataFrame:
     if normalized:
         return _normalize_rows(normalized)
 
-    # Compatibilidade com uma versão em que Registros eram o cabeçalho e Setores
-    # continham as quantidades por registro.
-    registros_by_id = _index_by_id(registros)
+    # Estrutura usada no banco atual do IBE:
+    # Registros = cabeçalho do culto/data/grupo
+    # Contagens = linhas por setor (RegistroId, NomeSetor, Quantidade).
+    #
+    # É daqui que saem também os dois totais pedidos no painel:
+    #   - Visitantes: NomeSetor = "Visitantes" + Quantidade
+    #   - On-line: NomeSetor = "Online"/"On-line" + Quantidade
+    contagens_por_registro: dict[str, list[dict]] = {}
+    for contagem in contagens:
+        registro_id = _foreign_id(contagem, "Registro")
+        if registro_id is None:
+            continue
+        contagens_por_registro.setdefault(str(registro_id), []).append(contagem)
+
     for registro in registros:
         registro_id = _row_id(registro)
         culto_id = _foreign_id(registro, "Culto")
         culto = cultos_by_id.get(str(culto_id), {}) if culto_id is not None else {}
+        if not _row_is_allowed_for_church(registro, church_id):
+            continue
+        if not _row_is_allowed_for_church(culto, church_id):
+            continue
 
         row = _base_normalized_row()
         row["data"] = _extract_date(registro) or _extract_date(culto)
         row["grupo_recepcao"] = _extract_group(registro, culto)
         row["horario_culto"] = _extract_service(registro, culto)
         _fill_direct_counts(row, registro)
+        _fill_direct_counts(row, culto)
+
         direct_total = _lookup(registro, "Total", "TotalPresencial", "QuantidadeTotal", "TotalPessoas")
         if direct_total not in (None, ""):
             row["total_presencial"] = _number(direct_total)
 
-        linked_setores = _related_rows(setores, "Registro", registro_id)
-        for setor_row in linked_setores:
-            name = _lookup(setor_row, "Nome", "NomeSetor", "Setor", "Descricao", "Titulo")
-            field = _sector_target(name)
-            if field:
-                row[field] = _number(row.get(field)) + _extract_quantity(setor_row)
+        # Se existem linhas detalhadas em Contagens, elas são a fonte de verdade
+        # para cada setor e sobrescrevem eventual valor duplicado no cabeçalho.
+        detail_totals: dict[str, int] = {}
+        for contagem in contagens_por_registro.get(str(registro_id), []):
+            if not _row_is_allowed_for_church(contagem, church_id):
+                continue
+            setor_name = _lookup(contagem, "NomeSetor", "SetorNome", "Setor", "Nome")
+            field = _sector_target(setor_name)
+            if not field:
+                continue
+            detail_totals[field] = detail_totals.get(field, 0) + _extract_quantity(contagem)
+
+        for field, quantity in detail_totals.items():
+            row[field] = quantity
+
+        # Compatibilidade adicional com bancos antigos onde Setores tinha a quantidade.
+        if not detail_totals:
+            linked_setores = _related_rows(setores, "Registro", registro_id)
+            for setor_row in linked_setores:
+                name = _lookup(setor_row, "Nome", "NomeSetor", "Setor", "Descricao", "Titulo")
+                field = _sector_target(name)
+                if field:
+                    row[field] = _number(row.get(field)) + _extract_quantity(setor_row)
 
         final = _finalize_row(row)
         if final:
@@ -602,41 +758,64 @@ def _load_local_history() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=90, show_spinner="Atualizando dados...")
-def load_dashboard_data(url: str, key: str) -> pd.DataFrame:
-    client = create_client(url, key)
-    dataframe = _load_relational_dashboard_data(client)
+def load_dashboard_data(
+    url: str, key: str, access_token: str = "", church_id: str = ""
+) -> pd.DataFrame:
+    client = _read_client(url, key, access_token or None)
+    dataframe = _load_relational_dashboard_data(client, church_id=church_id or None)
     if not dataframe.empty:
         dataframe.attrs["source"] = "supabase"
     return dataframe
 
 
-def get_dashboard_data(secrets: Mapping[str, str]) -> pd.DataFrame:
-    """Tenta as credenciais disponíveis e nunca trata uma tabela vazia como sucesso."""
-    url, keys = _get_read_configuration(secrets)
+def get_dashboard_data(
+    secrets: Mapping[str, str],
+    access_token: str | None = None,
+    church_id: str | None = None,
+) -> pd.DataFrame:
+    """Carrega os dados ao vivo do Supabase para a sessão autenticada.
+
+    Fluxo normal: publishable/anon + JWT do usuário, passando pelo RLS.
+    Se o servidor já possuir ``SUPABASE_SERVICE_ROLE_KEY`` configurado nos
+    Secrets, ela é usada apenas como fallback *no servidor* depois que o login
+    e a autorização da igreja já foram validados. A chave nunca vai ao browser.
+    """
+    url, keys = _get_read_configuration(secrets, access_token=access_token)
     last_error: Exception | None = None
 
+    # 1) Caminho preferido e seguro: JWT do usuário + RLS.
     for key in keys:
         try:
-            dataframe = load_dashboard_data(url, key)
+            dataframe = load_dashboard_data(url, key, access_token or "", church_id or "")
         except Exception as error:
             last_error = error
             continue
         if not dataframe.empty:
             return dataframe
 
-    local = _load_local_history()
-    if not local.empty:
-        return local
+    # 2) Compatibilidade com a instalação original: se o Streamlit já tiver a
+    # service role nos Secrets do servidor, usamos somente no backend. Isso evita
+    # derrubar o painel enquanto o RLS é corrigido e mantém o login obrigatório.
+    service_key = _get_optional_secret(secrets, "SUPABASE_SERVICE_ROLE_KEY")
+    if service_key:
+        try:
+            dataframe = load_dashboard_data(url, str(service_key), "", church_id or "")
+        except Exception as error:
+            last_error = error
+        else:
+            if not dataframe.empty:
+                return dataframe
 
+    # Não usamos XLSX local como fallback: o painel deve refletir apenas o banco.
     if last_error:
-        raise SupabaseDataError("Não foi possível carregar as contagens do Supabase.") from last_error
-    raise SupabaseDataError("As tabelas foram encontradas, mas não há dados compatíveis para exibir.")
+        raise SupabaseDataError("Não foi possível carregar os dados ao vivo do Supabase.") from last_error
+    raise SupabaseDataError("O Supabase respondeu, mas não retornou dados compatíveis para esta igreja.")
 
 
 @st.cache_data(ttl=90, show_spinner=False)
-def load_sector_distribution(url: str, key: str) -> pd.DataFrame:
+def load_sector_distribution(url: str, key: str, access_token: str = "") -> pd.DataFrame:
     """Une Registros e Contagens para montar a distribuição por setor."""
-    client = create_client(url, key)
+    client = _read_client(url, key, access_token or None)
     registros = pd.DataFrame(
         _fetch_rows(client.table("Registros").select("Id"))
     )
@@ -674,13 +853,16 @@ def load_sector_distribution(url: str, key: str) -> pd.DataFrame:
     )
 
 
-def get_sector_distribution(secrets: Mapping[str, str]) -> pd.DataFrame:
+def get_sector_distribution(
+    secrets: Mapping[str, str],
+    access_token: str | None = None,
+) -> pd.DataFrame:
     """Obtém a distribuição diretamente de Contagens.NomeSetor e Quantidade."""
-    url, keys = _get_read_configuration(secrets)
+    url, keys = _get_read_configuration(secrets, access_token=access_token)
     last_error: Exception | None = None
     for key in keys:
         try:
-            distribution = load_sector_distribution(url, key)
+            distribution = load_sector_distribution(url, key, access_token or "")
         except Exception as error:
             last_error = error
             continue
@@ -694,10 +876,10 @@ def get_sector_distribution(secrets: Mapping[str, str]) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=90, show_spinner=False)
-def load_online_by_reception(url: str, key: str) -> pd.DataFrame:
+def load_online_by_reception(url: str, key: str, access_token: str = "") -> pd.DataFrame:
     """Carrega a agregação SQL das pessoas on-line por grupo de recepção."""
     rows = _fetch_rows(
-        create_client(url, key)
+        _read_client(url, key, access_token or None)
         .table("vw_online_por_grupo_recepcao")
         .select("grupo_recepcao,quantidade_online")
     )
@@ -717,13 +899,16 @@ def load_online_by_reception(url: str, key: str) -> pd.DataFrame:
     return dataframe.sort_values("Grupo da recepção").reset_index(drop=True)
 
 
-def get_online_by_reception(secrets: Mapping[str, str]) -> pd.DataFrame:
+def get_online_by_reception(
+    secrets: Mapping[str, str],
+    access_token: str | None = None,
+) -> pd.DataFrame:
     """Obtém a soma on-line por grupo de recepção da view SQL."""
-    url, keys = _get_read_configuration(secrets)
+    url, keys = _get_read_configuration(secrets, access_token=access_token)
     last_error: Exception | None = None
     for key in keys:
         try:
-            dataframe = load_online_by_reception(url, key)
+            dataframe = load_online_by_reception(url, key, access_token or "")
         except Exception as error:
             last_error = error
             continue
@@ -731,6 +916,66 @@ def get_online_by_reception(secrets: Mapping[str, str]) -> pd.DataFrame:
             return dataframe
 
     empty_dataframe = pd.DataFrame(columns=["Grupo da recepção", "Quantidade On-line"])
+    if last_error:
+        empty_dataframe.attrs["load_error"] = True
+    return empty_dataframe
+
+
+@st.cache_data(ttl=90, show_spinner=False)
+def load_visitors_by_culto(url: str, key: str, access_token: str = "") -> pd.DataFrame:
+    """Agrupa apenas os registros cujo setor é visitante, por nome do culto."""
+    try:
+        registros = _fetch_rows(_read_client(url, key, access_token or None).table("Registros").select("*"))
+    except Exception:
+        registros = []
+
+    rows: list[dict] = []
+    for registro in registros:
+        setor_name = _clean_text(
+            _lookup(registro, "NomeSetor", "SetorNome", "Setor", "Nome", "NomeSetorVisitante")
+        )
+        culto_name = _clean_text(
+            _lookup(registro, "NomeCulto", "CultoNome", "NomeCultoDoRegistro", "Nome", "Titulo")
+        )
+        if setor_name is None and culto_name is None:
+            continue
+
+        normalized_setor = _canonical(setor_name or "")
+        if not normalized_setor and culto_name is not None:
+            normalized_setor = _canonical(culto_name)
+
+        if normalized_setor and "visitante" in normalized_setor:
+            quantity = _number(_lookup(registro, "Quantidade", "Qtd", "Qnt", "Valor", "Total"))
+            rows.append({
+                "Nome do culto": culto_name or "Visitantes",
+                "Quantidade": quantity,
+            })
+
+    if not rows:
+        return pd.DataFrame(columns=["Nome do culto", "Quantidade"])
+
+    dataframe = pd.DataFrame(rows)
+    dataframe = dataframe.groupby("Nome do culto", as_index=False)["Quantidade"].sum()
+    return dataframe.sort_values("Quantidade", ascending=False).reset_index(drop=True)
+
+
+def get_visitors_by_culto(
+    secrets: Mapping[str, str],
+    access_token: str | None = None,
+) -> pd.DataFrame:
+    """Obtém visitantes quando uma tela auxiliar precisar dessa agregação."""
+    url, keys = _get_read_configuration(secrets, access_token=access_token)
+    last_error: Exception | None = None
+    for key in keys:
+        try:
+            dataframe = load_visitors_by_culto(url, key, access_token or "")
+        except Exception as error:
+            last_error = error
+            continue
+        if not dataframe.empty:
+            return dataframe
+
+    empty_dataframe = pd.DataFrame(columns=["Nome do culto", "Quantidade"])
     if last_error:
         empty_dataframe.attrs["load_error"] = True
     return empty_dataframe
