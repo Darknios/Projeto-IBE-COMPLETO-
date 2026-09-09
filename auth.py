@@ -124,11 +124,6 @@ def authenticate(
     login: str,
     password: str,
 ) -> dict[str, Any]:
-    expected_church = _allowed_church_id(secrets)
-    provided_church = church_id_input.strip()
-    if not provided_church or not hmac.compare_digest(provided_church, expected_church):
-        raise AuthorizationError("ID da igreja inválido para este painel.")
-
     email = login.strip().lower()
     if not email or not password:
         raise AuthenticationError("Informe usuário e senha.")
@@ -147,17 +142,8 @@ def authenticate(
         raise AuthenticationError("Não foi possível iniciar a sessão.")
 
     app_metadata = _metadata(user)
-    church = _lookup(app_metadata, "igreja_id", "igrejaid", "church_id", "tenant_id")
     role = _normalize_role(_lookup(app_metadata, "perfil", "role", "cargo"))
     name = _lookup(app_metadata, "nome", "name", "display_name")
-
-    profile_church = str(church or "").strip()
-    if not profile_church or not hmac.compare_digest(profile_church, expected_church):
-        try:
-            client.auth.sign_out()
-        except Exception:
-            pass
-        raise AuthorizationError("Esta conta não está vinculada à igreja autorizada.")
 
     if role not in _allowed_roles(secrets):
         try:
@@ -173,7 +159,7 @@ def authenticate(
         "email": user_email,
         "name": str(name or user_email),
         "role": role,
-        "church_id": expected_church,
+        "church_id": _allowed_church_id(secrets),
         "access_token": str(getattr(session, "access_token", "") or ""),
         "refresh_token": str(getattr(session, "refresh_token", "") or ""),
     }
@@ -250,11 +236,17 @@ def _inject_login_css() -> None:
         }
         .st-key-login_card * { box-sizing: border-box; }
         .st-key-login_card div[data-testid="stImage"] {
+            width: 100% !important;
             display: flex;
+            align-items: center;
             justify-content: center;
+            align-self: center;
+            text-align: center;
             margin: 0 auto .3rem;
         }
         .st-key-login_card div[data-testid="stImage"] img {
+            display: block !important;
+            margin: 0 auto !important;
             width: auto !important;
             max-width: 210px !important;
             max-height: 92px !important;
@@ -472,12 +464,6 @@ def require_dashboard_login(secrets: Mapping[str, Any]) -> bool:
             unsafe_allow_html=True,
         )
 
-        church_id_value = st.text_input(
-            "ID da Igreja",
-            placeholder="Digite o ID da sua igreja",
-            autocomplete="off",
-            key="auth_church_id",
-        )
         login_value = st.text_input(
             "Usuário",
             placeholder="Seu usuário ou e-mail",
@@ -512,7 +498,7 @@ def require_dashboard_login(secrets: Mapping[str, Any]) -> bool:
             try:
                 user = authenticate(
                     secrets,
-                    church_id_input=church_id_value,
+                    church_id_input="",
                     login=login_value,
                     password=password_value,
                 )
