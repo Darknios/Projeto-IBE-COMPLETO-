@@ -268,6 +268,8 @@ def sidebar_filter_group(
     render_in_tab: bool = False,
 ) -> dict[str, list]:
     df = dataframe.copy()
+    df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
+    df = df[df["Data"].notna()].copy()
     df["Mês"] = df["Data"].dt.month
     df["Ano"] = df["Data"].dt.year
     if filter_renove:
@@ -386,6 +388,8 @@ def _show_dashboard_compact(dataframe: pd.DataFrame) -> None:
         return
 
     dataframe = dataframe.copy()
+    dataframe["Data"] = pd.to_datetime(dataframe["Data"], errors="coerce")
+    dataframe = dataframe[dataframe["Data"].notna()].copy()
     dataframe["Mês"] = dataframe["Data"].dt.month
     dataframe["Ano"] = dataframe["Data"].dt.year
     # Sidebar logo + filters for compact view (keeps mobile friendly behaviour)
@@ -469,6 +473,8 @@ def show_dashboard(
         return
 
     dataframe = dataframe.copy()
+    dataframe["Data"] = pd.to_datetime(dataframe["Data"], errors="coerce")
+    dataframe = dataframe[dataframe["Data"].notna()].copy()
     dataframe["Mês"] = dataframe["Data"].dt.month
     dataframe["Ano"] = dataframe["Data"].dt.year
     if filter_group_contains:
