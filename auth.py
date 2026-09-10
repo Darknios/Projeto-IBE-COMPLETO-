@@ -124,7 +124,8 @@ def authenticate(
     login: str,
     password: str,
 ) -> dict[str, Any]:
-    email = login.strip().lower()
+    email = str(login or "").strip().lower()
+    password = str(password or "").strip()
     if not email or not password:
         raise AuthenticationError("Informe usuário e senha.")
     if "@" not in email:
@@ -459,42 +460,41 @@ def require_dashboard_login(secrets: Mapping[str, Any]) -> bool:
         st.markdown(
             """
             <div class="login-title">Acessar Painel</div>
-            <div class="login-subtitle">Acesso exclusivo da sua igreja</div>
+            <div class="login-subtitle">Entre com seu usuário e senha</div>
             """,
             unsafe_allow_html=True,
         )
 
-        login_value = st.text_input(
-            "Usuário",
-            placeholder="Seu usuário ou e-mail",
-            autocomplete="username",
-            key="auth_login",
-        )
-        password_value = st.text_input(
-            "Senha",
-            type="password",
-            placeholder="Sua senha",
-            autocomplete="current-password",
-            key="auth_password",
-        )
-        remember_session = st.checkbox(
-            "Lembrar nesta sessão",
-            value=True,
-            key="auth_remember",
-        )
-        st.markdown(
-            "<div class='login-security'>🔒 Somente contas vinculadas ao ID desta igreja podem entrar.</div>",
-            unsafe_allow_html=True,
-        )
-        submitted = st.button(
-            "Entrar",
-            type="primary",
-            use_container_width=True,
-            key="dashboard_login_button",
-        )
+        with st.form(key="login_form"):
+            login_value = st.text_input(
+                "Usuário",
+                placeholder="Seu usuário ou e-mail",
+                autocomplete="username",
+                key="auth_login",
+            )
+            password_value = st.text_input(
+                "Senha",
+                type="password",
+                placeholder="Sua senha",
+                autocomplete="current-password",
+                key="auth_password",
+            )
+            remember_session = st.checkbox(
+                "Lembrar nesta sessão",
+                value=True,
+                key="auth_remember",
+            )
+            submitted = st.form_submit_button(
+                "Entrar",
+                type="primary",
+                use_container_width=True,
+                key="dashboard_login_button",
+            )
 
         if submitted:
             st.session_state.login_error = None
+            login_value = str(st.session_state.get("auth_login") or "").strip()
+            password_value = str(st.session_state.get("auth_password") or "").strip()
             try:
                 user = authenticate(
                     secrets,
@@ -517,7 +517,7 @@ def require_dashboard_login(secrets: Mapping[str, Any]) -> bool:
             st.error(st.session_state.login_error)
 
     st.markdown(
-        "<div class='login-footer'>ACESSO PROTEGIDO • IGREJA BATISTA EMANUEL</div>",
+        "<div class='login-footer'>ACESSO PROTEGIDO</div>",
         unsafe_allow_html=True,
     )
     return False
