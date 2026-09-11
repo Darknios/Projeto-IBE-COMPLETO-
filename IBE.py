@@ -558,8 +558,10 @@ def show_dashboard(
             x="DataLabel",
             y="Total",
             markers=True,
+            text="Total",
             title=f"Total de público por data ({title_suffix})",
         )
+        chart.update_traces(textposition="top center", cliponaxis=False)
         chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Total de público", xaxis_title="Data")
         st.plotly_chart(chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
