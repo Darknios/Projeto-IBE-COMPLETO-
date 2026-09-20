@@ -11,6 +11,8 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from dashboard_metrics import sector_average_by_service
+
 from supabase_data import (
     SupabaseConfigurationError,
     SupabaseDataError,
@@ -104,6 +106,44 @@ def _sector_distribution_from_dashboard(dataframe: pd.DataFrame) -> pd.DataFrame
         value = int(pd.to_numeric(dataframe[column], errors="coerce").fillna(0).sum())
         rows.append({"Setor": label, "Quantidade": value})
     return pd.DataFrame(rows, columns=["Setor", "Quantidade"])
+
+
+def _sector_metric_columns() -> dict[str, str]:
+    return {
+        "Púlpito": "Quantidade Púlpito",
+        "Cadeiras A": "Quantidade Cadeiras A",
+        "Cadeiras B": "Quantidade Cadeiras B",
+        "Cadeiras C": "Quantidade Cadeiras C",
+        "Cadeiras D": "Quantidade Cadeiras D",
+        "Galeria": "Quantidade Galeria",
+        "Salas": "Quantidade Salas",
+        "Externo": "Quantidade Externo",
+        "On-line": "Quantidade On-line",
+        "Visitantes": VISITORS_COLUMN,
+    }
+
+
+def _available_sector_options(dataframe: pd.DataFrame) -> list[str]:
+    options: list[str] = []
+    for label, column in _sector_metric_columns().items():
+        if column not in dataframe.columns:
+            continue
+        total = pd.to_numeric(dataframe[column], errors="coerce").fillna(0)
+        if total.sum() > 0:
+            options.append(label)
+    return options
+
+
+def _sector_value(row: pd.Series, sector_names: list[str]) -> float:
+    if not sector_names or "Todos" in sector_names:
+        return float(pd.to_numeric(row.get("Total", 0), errors="coerce").fillna(0))
+    value = 0.0
+    for label in sector_names:
+        column = _sector_metric_columns().get(label)
+        if not column:
+            continue
+        value += float(pd.to_numeric(row.get(column, 0), errors="coerce").fillna(0))
+    return value
 
 
 def dataframe_to_excel(dataframe: pd.DataFrame) -> bytes:
@@ -322,6 +362,13 @@ def sidebar_filter_group(
                      {"format_func": lambda value: value if value == "Todos" else format_service_time(value),
                       "key": f"{key_prefix}_service"})
                 )
+            sector_options = ["Todos"] + _available_sector_options(df)
+            selectors.append(
+                ("Setor", st.multiselect,
+                 sector_options,
+                 ["Todos"],
+                 {"key": f"{key_prefix}_sector"})
+            )
             columns = st.columns(len(selectors))
             selected_values = {}
             for index, (label, control, options, default, kwargs) in enumerate(selectors):
@@ -335,6 +382,7 @@ def sidebar_filter_group(
             selected_year = selected_values["Ano"]
             selected_date = selected_values[date_label]
             selected_service = selected_values.get("Horário do culto", ["Todos"])
+            selected_sector = selected_values.get("Setor", ["Todos"])
     else:
         container = st.sidebar
         container.markdown(f"<div class='filters-title'>{title}</div>", unsafe_allow_html=True)
@@ -373,11 +421,19 @@ def sidebar_filter_group(
                 format_func=lambda value: value if value == "Todos" else format_service_time(value),
                 key=f"{key_prefix}_service",
             )
+        sector_options = ["Todos"] + _available_sector_options(df)
+        selected_sector = container.multiselect(
+            "Setor",
+            sector_options,
+            default=["Todos"],
+            key=f"{key_prefix}_sector",
+        )
     return {
         "month": selected_month,
         "year": selected_year,
         "date": selected_date,
         "service": selected_service,
+        "sector": selected_sector,
     }
 
 
@@ -489,11 +545,13 @@ def show_dashboard(
         selected_year = ["Todos"]
         selected_date = ["Todos"]
         selected_service = ["Todos"]
+        selected_sector = ["Todos"]
     else:
         selected_month = sidebar_filters["month"]
         selected_year = sidebar_filters["year"]
         selected_date = sidebar_filters["date"]
         selected_service = sidebar_filters["service"]
+        selected_sector = sidebar_filters.get("sector", ["Todos"])
 
     # footer logo removed
     filtered = dataframe.copy()
@@ -657,23 +715,24 @@ def show_dashboard(
     service_chart.update_layout(margin=dict(l=0, r=0, t=80, b=0))
     st.plotly_chart(service_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
 
-    average_data = chart_data.copy()
-    average_data["Período do culto"] = average_data["Horário do culto"].map(
-        lambda value: service_labels.get(str(value).strip().lower(), str(value))
-    )
-    average_by_service = (
-        average_data.groupby("Período do culto", as_index=False)["Total"]
-        .mean()
-        .sort_values("Período do culto")
-    )
-    average_by_service = average_by_service[average_by_service["Período do culto"] != "Missa"]
+    sector_selection = selected_sector if selected_sector else ["Todos"]
+    if not (not sector_selection or "Todos" in sector_selection):
+        selected_sector_name = sector_selection[0] if len(sector_selection) == 1 else ", ".join(sector_selection)
+        average_by_service = sector_average_by_service(chart_data, sector=selected_sector_name)
+        chart_title = f"Média de pessoas por culto — {selected_sector_name}"
+        x_title = f"Quantidade média de pessoas ({selected_sector_name})"
+    else:
+        average_by_service = sector_average_by_service(chart_data, sector="Todos")
+        chart_title = "Média de pessoas por culto"
+        x_title = "Quantidade média de pessoas"
+
     if not average_by_service.empty:
         average_service_chart = px.bar(
             average_by_service,
-            x="Total",
+            x="Valor",
             y="Período do culto",
-            text="Total",
-            title="Média de pessoas por culto",
+            text="Valor",
+            title=chart_title,
             orientation="h",
             color="Período do culto",
             color_discrete_map={"Manhã": "#19c7b1", "Noite": "#123b66"},
@@ -687,14 +746,14 @@ def show_dashboard(
             showlegend=False,
             margin=dict(l=72, r=48, t=80, b=12),
             yaxis_title="Média de pessoas",
-            xaxis_title="Quantidade média de pessoas",
+            xaxis_title=x_title,
             yaxis=dict(
                 categoryorder="array",
                 categoryarray=["Noite", "Manhã"],
                 automargin=True,
             ),
             xaxis=dict(
-                range=[0, max(float(average_by_service["Total"].max()) * 1.18, 1)],
+                range=[0, max(float(average_by_service["Valor"].max()) * 1.18, 1)],
                 automargin=True,
             ),
         )
@@ -901,6 +960,7 @@ default_filters = {
     "year": ["Todos"],
     "date": ["Todos"],
     "service": ["Todos"],
+    "sector": ["Todos"],
 }
 
 tabs = st.tabs(["Cultos de Domingo", "Cultos Renove", "Cultos de Quarta-feira", "Cultos do Cafofo"])
@@ -982,4 +1042,4 @@ with tabs[3]:
         sidebar_filters=cafofo_filters,
         show_online_summary=True,
     )
-    
+
