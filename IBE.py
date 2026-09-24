@@ -302,6 +302,7 @@ def sidebar_filter_group(
     date_label: str = "Domingo/data",
     filter_renove: bool = False,
     show_service_filter: bool = True,
+    show_sector_filter: bool = True,
     weekday_filter: int | None = None,
     exclude_service_values: list[str] | None = None,
     group_contains: str | None = None,
@@ -362,13 +363,14 @@ def sidebar_filter_group(
                      {"format_func": lambda value: value if value == "Todos" else format_service_time(value),
                       "key": f"{key_prefix}_service"})
                 )
-            sector_options = ["Todos"] + _available_sector_options(df)
-            selectors.append(
-                ("Setor", st.multiselect,
-                 sector_options,
-                 ["Todos"],
-                 {"key": f"{key_prefix}_sector"})
-            )
+            if show_sector_filter:
+                sector_options = ["Todos"] + _available_sector_options(df)
+                selectors.append(
+                    ("Setor", st.multiselect,
+                     sector_options,
+                     ["Todos"],
+                     {"key": f"{key_prefix}_sector"})
+                )
             columns = st.columns(len(selectors))
             selected_values = {}
             for index, (label, control, options, default, kwargs) in enumerate(selectors):
@@ -421,13 +423,16 @@ def sidebar_filter_group(
                 format_func=lambda value: value if value == "Todos" else format_service_time(value),
                 key=f"{key_prefix}_service",
             )
-        sector_options = ["Todos"] + _available_sector_options(df)
-        selected_sector = container.multiselect(
-            "Setor",
-            sector_options,
-            default=["Todos"],
-            key=f"{key_prefix}_sector",
-        )
+        if show_sector_filter:
+            sector_options = ["Todos"] + _available_sector_options(df)
+            selected_sector = container.multiselect(
+                "Setor",
+                sector_options,
+                default=["Todos"],
+                key=f"{key_prefix}_sector",
+            )
+        else:
+            selected_sector = ["Todos"]
     return {
         "month": selected_month,
         "year": selected_year,
@@ -992,6 +997,7 @@ with tabs[1]:
         date_label="Data",
         filter_renove=True,
         show_service_filter=False,
+        show_sector_filter=False,
         render_in_tab=True,
     )
     show_dashboard(
@@ -1011,6 +1017,7 @@ with tabs[2]:
         date_label="Data",
         filter_renove=False,
         show_service_filter=False,
+        show_sector_filter=False,
         weekday_filter=2,
         render_in_tab=True,
     )
@@ -1031,6 +1038,7 @@ with tabs[3]:
         date_label="Data",
         filter_renove=False,
         show_service_filter=False,
+        show_sector_filter=False,
         group_contains="Cafofo",
         render_in_tab=True,
     )
