@@ -528,6 +528,8 @@ def show_dashboard(
     show_online_summary: bool = True,
 ) -> None:
     """Restaura a análise completa do dashboard original usando dados do Supabase."""
+    event_totals = dataframe.attrs.get("event_totals", pd.DataFrame(columns=["Evento", "Total"]))
+    event_totals_error = dataframe.attrs.get("event_totals_error")
     st.markdown("<h2 class='dashboard-title'>Dashboard de frequência</h2>", unsafe_allow_html=True)
     if dataframe.empty:
         st.info("Ainda não há contagens disponíveis.")
@@ -645,7 +647,7 @@ def show_dashboard(
         y="Total",
         markers=True,
         text="Total",
-        title="Evolução do Total de público por Domingo",
+        title="Evolução do Total de público por domingo",
     )
     group_chart.update_traces(textposition="top center", cliponaxis=False)
     group_chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Total de público")
@@ -800,6 +802,36 @@ def show_dashboard(
     date_chart.update_traces(textposition="top center", cliponaxis=False)
     date_chart.update_layout(margin=dict(l=0, r=0, t=80, b=0), yaxis_title="Total de público")
     st.plotly_chart(date_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
+
+    st.subheader("Total de público por Eventos")
+    if event_totals_error:
+        st.warning(
+            f"Não foi possível consultar a tabela {event_totals_error}. "
+            "Verifique as permissões de leitura no Supabase."
+        )
+    elif not event_totals.empty:
+        event_chart = px.bar(
+            event_totals.sort_values("Total", ascending=False),
+            x="Total",
+            y="Evento",
+            text="Total",
+            orientation="h",
+        )
+        event_chart.update_traces(
+            marker_color="#A78BFA",
+            textposition="outside",
+            cliponaxis=False,
+        )
+        event_chart.update_layout(
+            margin=dict(l=0, r=0, t=80, b=0),
+            xaxis_title="Total de público",
+            yaxis_title="Evento",
+            yaxis=dict(autorange="reversed", automargin=True),
+            xaxis=dict(automargin=True),
+        )
+        st.plotly_chart(event_chart, use_container_width=True, config={"displayModeBar": True, "responsive": True})
+    else:
+        st.info("Nenhum total de público foi encontrado para eventos vinculados pelo nome.")
 
     st.subheader("Quantidades de público por setor")
     display = period_filtered.copy()
