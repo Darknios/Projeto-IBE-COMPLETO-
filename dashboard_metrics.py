@@ -25,6 +25,36 @@ SERVICE_LABELS = {
 }
 
 
+def total_by_event_name(events: list[dict], registrations: list[dict]) -> pd.DataFrame:
+    """Soma Registro.Total somente quando NomeEvento corresponde a Eventos.Nome."""
+    event_names: dict[str, str] = {}
+    for event in events:
+        name = event.get("Nome")
+        if name is None:
+            continue
+        display_name = " ".join(str(name).split())
+        if display_name:
+            event_names.setdefault(display_name.casefold(), display_name)
+
+    totals: dict[str, float] = {}
+    for registration in registrations:
+        event_key = " ".join(str(registration.get("NomeEvento") or "").split()).casefold()
+        if event_key not in event_names:
+            continue
+        total = pd.to_numeric(registration.get("Total"), errors="coerce")
+        if pd.isna(total):
+            total = 0
+        totals[event_key] = totals.get(event_key, 0) + float(total)
+
+    return pd.DataFrame(
+        [
+            {"Evento": event_names[event_key], "Total": total}
+            for event_key, total in totals.items()
+        ],
+        columns=["Evento", "Total"],
+    )
+
+
 def sector_average_by_service(dataframe: pd.DataFrame, sector: str = "Todos") -> pd.DataFrame:
     """Calcula a média por período do culto obedecendo ao setor selecionado.
 
