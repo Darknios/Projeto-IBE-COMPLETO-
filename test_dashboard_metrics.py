@@ -1,6 +1,6 @@
 import pandas as pd
 
-from dashboard_metrics import sector_average_by_service
+from dashboard_metrics import sector_average_by_service, total_by_event_name
 from IBE import sidebar_filter_group
 
 
@@ -57,3 +57,17 @@ def test_sector_average_by_service_all_sectors_uses_total():
 
     assert list(result["Período do culto"]) == ["Manhã", "Noite"]
     assert list(result["Valor"]) == [100.0, 200.0]
+
+
+def test_total_by_event_name_only_sums_linked_registrations():
+    events = [{"Nome": "Natal"}, {"Nome": "Páscoa"}]
+    registrations = [
+        {"NomeEvento": "Natal", "Total": 40},
+        {"NomeEvento": " natal ", "Total": 12},
+        {"NomeEvento": "Evento sem cadastro", "Total": 900},
+        {"NomeEvento": "Páscoa", "Total": 25},
+    ]
+
+    result = total_by_event_name(events, registrations)
+
+    assert dict(zip(result["Evento"], result["Total"])) == {"Natal": 52, "Páscoa": 25}
