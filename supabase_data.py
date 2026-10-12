@@ -22,6 +22,8 @@ import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
 from supabase import create_client
 
+from dashboard_metrics import total_by_event_name
+
 
 DISPLAY_COLUMNS = {
     "data": "Data",
@@ -44,7 +46,7 @@ SUPABASE_PROJECT_REF = "fyyvubvceijyeuhvncri"
 PUBLIC_DASHBOARD_URL = f"https://{SUPABASE_PROJECT_REF}.supabase.co"
 PUBLIC_DASHBOARD_KEY = "sb_publishable_AvqTQvdX630cTqbJ0kIlHQ_Ky-BaS8i"
 LEGACY_PUBLIC_DASHBOARD_KEY = "sb_publishable__R5PSqn3VUYXJdcy-RsXOQ_69pJelxj"
-KNOWN_TABLES = ("Contagens", "Cultos", "Registros", "Setores", "Igrejas")
+KNOWN_TABLES = ("Contagens", "Cultos", "Registros", "Setores", "Igrejas", "Eventos")
 
 
 class SupabaseConfigurationError(RuntimeError):
@@ -278,11 +280,37 @@ def _fetch_rows(query: object) -> list[dict]:
         start += PAGE_SIZE
 
 
-def _fetch_table(client: object, table: str) -> list[dict]:
+def _fetch_table(
+    client: object,
+    table: str,
+    errors: set[str] | None = None,
+) -> list[dict]:
     try:
         return _fetch_rows(client.table(table).select("*"))
     except Exception:
+        if errors is not None:
+            errors.add(table)
         return []
+
+
+def _load_event_totals(
+    events: list[dict],
+    registrations: list[dict],
+    church_id: str | None = None,
+    errors: set[str] | None = None,
+) -> tuple[pd.DataFrame, str | None]:
+    """Agrega os vínculos e distingue consulta sem acesso de lista vazia."""
+    errors = errors if errors is not None else set()
+    if "Eventos" in errors:
+        return pd.DataFrame(columns=["Evento", "Total"]), "Eventos"
+    if "Registros" in errors:
+        return pd.DataFrame(columns=["Evento", "Total"]), "Registros"
+
+    allowed_events = [row for row in events if _row_is_allowed_for_church(row, church_id)]
+    allowed_registrations = [
+        row for row in registrations if _row_is_allowed_for_church(row, church_id)
+    ]
+    return total_by_event_name(allowed_events, allowed_registrations), None
 
 
 def _index_by_id(rows: list[dict]) -> dict[str, dict]:
@@ -584,11 +612,15 @@ def _normalize_rows(rows: list[dict]) -> pd.DataFrame:
 
 def _load_relational_dashboard_data(client: object, church_id: str | None = None) -> pd.DataFrame:
     """Lê as tabelas reais do banco e monta a visão larga usada pelo dashboard."""
-    tables = {name: _fetch_table(client, name) for name in KNOWN_TABLES}
+    table_errors: set[str] = set()
+    tables = {name: _fetch_table(client, name, table_errors) for name in KNOWN_TABLES}
     contagens = tables["Contagens"]
     cultos = tables["Cultos"]
     registros = tables["Registros"]
     setores = tables["Setores"]
+    event_totals, event_totals_error = _load_event_totals(
+        tables["Eventos"], registros, church_id, table_errors
+    )
 
     cultos_by_id = _index_by_id(cultos)
     setores_by_id = _index_by_id(setores)
@@ -629,7 +661,10 @@ def _load_relational_dashboard_data(client: object, church_id: str | None = None
             normalized.append(final)
 
     if normalized:
-        return _normalize_rows(normalized)
+        dataframe = _normalize_rows(normalized)
+        dataframe.attrs["event_totals"] = event_totals
+        dataframe.attrs["event_totals_error"] = event_totals_error
+        return dataframe
 
     # Estrutura usada no banco atual do IBE:
     # Registros = cabeçalho do culto/data/grupo
@@ -694,9 +729,15 @@ def _load_relational_dashboard_data(client: object, church_id: str | None = None
             normalized.append(final)
 
     if normalized:
-        return _normalize_rows(normalized)
+        dataframe = _normalize_rows(normalized)
+        dataframe.attrs["event_totals"] = event_totals
+        dataframe.attrs["event_totals_error"] = event_totals_error
+        return dataframe
 
-    return _empty_dashboard()
+    dataframe = _empty_dashboard()
+    dataframe.attrs["event_totals"] = event_totals
+    dataframe.attrs["event_totals_error"] = event_totals_error
+    return dataframe
 
 
 def _load_local_history() -> pd.DataFrame:
