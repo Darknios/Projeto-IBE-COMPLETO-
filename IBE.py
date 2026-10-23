@@ -350,7 +350,7 @@ def sidebar_filter_group(
             selected_service = ["Todos"]
             if show_service_filter:
                 available_services = sorted(df["Horário do culto"].dropna().unique().tolist())
-                excluded_services = {"k9", "missa", "culto da juventude"}
+                excluded_services = {"k9", "missa", "culto da juventude", "especial"}
                 if exclude_service_values:
                     excluded_services.update(str(value).strip().lower() for value in exclude_service_values)
                 available_services = [
@@ -410,7 +410,7 @@ def sidebar_filter_group(
         selected_service = ["Todos"]
         if show_service_filter:
             available_services = sorted(df["Horário do culto"].dropna().unique().tolist())
-            excluded_services = {"k9", "missa", "culto da juventude"}
+            excluded_services = {"k9", "missa", "culto da juventude", "especial"}
             if exclude_service_values:
                 excluded_services.update(str(value).strip().lower() for value in exclude_service_values)
             available_services = [
@@ -468,7 +468,7 @@ def _show_dashboard_compact(dataframe: pd.DataFrame) -> None:
         + [
             value
             for value in sorted(dataframe["Horário do culto"].dropna().unique().tolist())
-            if str(value).strip().lower() not in {"k9", "missa", "culto da juventude"}
+            if str(value).strip().lower() not in {"k9", "missa", "culto da juventude", "especial"}
         ],
         default=["Todos"],
         format_func=lambda value: value if value == "Todos" else format_service_time(value),
@@ -1082,4 +1082,3 @@ with tabs[3]:
         sidebar_filters=cafofo_filters,
         show_online_summary=True,
     )
-
